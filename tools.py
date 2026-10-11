@@ -15,10 +15,10 @@ comfyui_model_info：查询模型/LoRA 元数据与触发词（本地 / civitai�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import random
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +68,10 @@ from workflow_builder import WorkflowBuilder
 
 MAX_LLM_LIST_ITEMS = 30
 MAX_LLM_DETAIL_ITEMS = 8
+_ASYNC_GENERATION_HINT = (
+    "提交后立即返回排队确认，可以继续聊天；完成后自动发送图片并通知。"
+    "自然回应用户，无需播报内部编号、轮询或重复提交。"
+)
 
 
 def _as_bool(value: Any, default: bool = False) -> bool:
@@ -514,7 +518,6 @@ class ComfyuiGenerateTool(FunctionTool[AstrAgentContext]):
     name: str = "comfyui_generate"
     description: str = (
         "高级兼容生成入口，按默认配方或指定工作流生成图片并发送到当前会话。"
-        "提交后返回生成队列任务编号；后台完成后自动发送图片并通知，无需等待或重复查询。"
         "日常自由生图使用 comfyui_draw，快捷配方生图使用 comfyui_recipe_draw。"
         "prompt 必填；未覆盖的参数沿用配方、插件配置或模板默认值，width/height 可按构图需求填写。"
         "当 LoRA 有助于实现用户要求的画风、角色、服饰或效果时，可主动查询并选用，用户无需点名 LoRA 或提供文件名。"
@@ -527,6 +530,7 @@ class ComfyuiGenerateTool(FunctionTool[AstrAgentContext]):
         "recipe 与 workflow 是两个独立入口：传 recipe 时按其模型家族解析当前工作流并写入保存参数；"
         "传 workflow 时按该模板生成、不套配方；两者都省略时优先默认配方，没有默认配方才用配置的默认工作流模板。"
         "生成成功后回复结果即可，图片已由插件发送。"
+        + _ASYNC_GENERATION_HINT
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -738,7 +742,8 @@ class ComfyuiGenerateTool(FunctionTool[AstrAgentContext]):
             )
             seed = generation_values["seed"]
             # 自动填 lora 触发词已禁用（33号要求，lora_meta 触发词乱提示），需要时显式传 trigger_words
-            prefix = f"astrbot_{uuid.uuid4().hex[:8]}"
+            # Keep output-node inputs stable so repeated requests can reuse its cache.
+            prefix = None
             if recipe_data is not None:
                 # 配方生成必须走保存的 workflow + slots。此前这里把配方压平成
                 # builder.build() 参数，导致 Power Lora Loader 的动态 lora_N
@@ -1463,12 +1468,12 @@ class ComfyuiRunWorkflowTool(FunctionTool[AstrAgentContext]):
     name: str = "comfyui_run_workflow"
     description: str = (
         "直接运行一个工作流 JSON（ComfyUI API 格式）并返回结果。"
-        "提交后返回插件队列任务编号，完成后自动发送图片并通知。"
         "等价于原生 MCP 的 run_workflow，但不依赖在线模板库。"
         "workflow 参数可以是：JSON 文件路径（本地或本机上已存在的路径）、"
         "或直接传 JSON 字符串（dict 格式，节点 id -> {class_type, inputs}）。"
         "用户有现成工作流 JSON / 想跑非内置模板的工作流时使用。"
         "生成的图片会自动下载到本地并发送到当前会话。"
+        + _ASYNC_GENERATION_HINT
     )
     parameters: dict = Field(
         default_factory=lambda: {
@@ -1480,7 +1485,7 @@ class ComfyuiRunWorkflowTool(FunctionTool[AstrAgentContext]):
                 },
                 "wait": {
                     "type": "boolean",
-                    "description": "兼容参数；插件运行时统一后台排队并返回任务编号",
+                    "description": "兼容参数；插件运行时统一后台排队并返回排队确认",
                 },
             },
             "required": ["workflow"],
@@ -1495,18 +1500,19 @@ class ComfyuiRunWorkflowTool(FunctionTool[AstrAgentContext]):
         raw = (raw or "").strip()
         if not raw:
             return None
-        # 先当路径试
-        p = Path(raw).expanduser()
-        if p.is_file():
-            try:
-                return json.loads(p.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as e:
-                raise ValueError(f"读取工作流文件失败: {e}") from e
-        # 再当 JSON 字符串试
+        # Parse inline JSON before filesystem probing (ENAMETOOLONG on Linux).
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"workflow 路径与 JSON 格式均无效: {e}") from e
+        except json.JSONDecodeError as inline_error:
+            try:
+                p = Path(raw).expanduser()
+                if not p.is_file():
+                    raise ValueError(
+                        f"workflow 路径与 JSON 格式均无效: {inline_error}"
+                    ) from inline_error
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, RuntimeError, json.JSONDecodeError) as e:
+                raise ValueError(f"读取工作流文件失败: {e}") from e
         if not isinstance(data, dict):
             raise ValueError("workflow JSON 必须是对象（节点 id -> 节点）")
         return data
@@ -2188,7 +2194,8 @@ _DRAW_DESC = (
     "省略可选参数沿用工作流。可按画风、角色、服饰或效果需求主动用 comfyui_lookup 查询并选用 LoRA；"
     "分辨率选择器工作流可用 aspect_ratio 和 megapixels 覆盖比例与目标百万像素数；"
     "按用途、类别或标签查询资源时传 model_family；完整已知文件名可跨家族查找。使用前核对资源与当前家族兼容，并采用返回的文件名、推荐权重和已知触发词。"
-    "复用配方用 comfyui_recipe_draw。提交后返回队列任务编号，可以继续聊天；后台完成后自动发送图片并通知，无需轮询或重复提交。"
+    "复用配方用 comfyui_recipe_draw。"
+    + _ASYNC_GENERATION_HINT
 )
 
 
@@ -2450,14 +2457,14 @@ class ComfyuiDrawTool(FunctionTool[AstrAgentContext]):
             return f"生成失败：{e}"
 
         if family is not None and self.profiles is not None:
-            profile = self.profiles.effective(workflow_name, wf)
+            profile = self.profiles.effective(workflow_name, wf, getattr(self.client, "_object_info", None))
             slots = profile.get("slots") or {}
             drop_nodes = list(profile.get("drop_nodes") or [])
         elif legacy_slots:
             slots = legacy_slots
             drop_nodes = list(legacy_drop_nodes or [])
         else:
-            slots = detect_slots(wf)
+            slots = detect_slots(wf, getattr(self.client, "_object_info", None))
             drop_nodes = list(ANIMA_DROP_NODES) if looks_like_anima(wf) else []
 
         if not slots.get("prompt"):
@@ -2511,7 +2518,6 @@ class ComfyuiDrawTool(FunctionTool[AstrAgentContext]):
                 wf,
                 slots,
                 values,
-                prefix=f"astrbot_{uuid.uuid4().hex[:8]}",
                 drop_nodes=drop_nodes,
             )
         except (TypeError, ValueError) as e:
@@ -2714,7 +2720,8 @@ _EDIT_DESC = (
     "按独立编辑工作流路由修改已有图片并直接发送结果。会按工作流输入顺序使用当前消息或引用消息中的多张图片；附件超过输入口时用 image_indices 选择；"
     "没有附图时可使用本插件上次生成的图片，或填写本插件此前回执的本地路径。"
     "局部改动默认沿用参考图原始宽高。需要按参考图比例缩放时使用 resolution；需要新画布/抠出素材时使用 custom_size 和 width/height。"
-    "这些画布参数只写入当前工作流已映射的输入。提交后返回队列任务编号；后台完成后自动发送图片并通知，无需轮询或重复提交。"
+    "这些画布参数只写入当前工作流已映射的输入。"
+    + _ASYNC_GENERATION_HINT
 )
 
 
@@ -3034,11 +3041,11 @@ class ComfyuiEditTool(FunctionTool[AstrAgentContext]):
                 return f"编辑失败：读取来源图片失败（{e}）。"
         suffixes = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp", "image/gif": ".gif"}
         uploads: list[str] = []
-        for index, content in enumerate(contents, start=1):
+        for content in contents:
             suffix = suffixes.get(image_media_type(content))
             if not suffix:
                 return "编辑失败：来源文件需为 PNG、JPEG、WebP 或 GIF 图片。"
-            uploads.append(f"astrbot_edit_{index}_{uuid.uuid4().hex}{suffix}")
+            uploads.append(f"astrbot_edit_{hashlib.sha256(content).hexdigest()}{suffix}")
         if resolution_provided:
             effective_resolution = resolution
         elif dimensions_provided:
@@ -3085,7 +3092,6 @@ class ComfyuiEditTool(FunctionTool[AstrAgentContext]):
         try:
             apply_slots(
                 wf, slots, apply_values,
-                prefix=f"astrbot_edit_{uuid.uuid4().hex[:8]}",
                 drop_nodes=profile.get("drop_nodes") or [],
             )
         except (TypeError, ValueError) as e:
@@ -3152,7 +3158,8 @@ _RECIPE_DRAW_DESC = (
     "使用已经实验并保存好的配方快捷生成新图片，完成后直接发送到当前会话；修改现有图片使用 comfyui_edit。"
     "prompt 必填，recipe 在用户点名配方时填写；省略 recipe 使用配置的默认配方。"
     "配方保存底模、LoRA、画幅和采样参数，并通过 model family 使用当前配置的工作流。"
-    "本工具用于复用固定方案；需要自由选择底模、LoRA 或采样参数时调用 comfyui_draw。提交后返回队列任务编号；后台完成后自动发送图片并通知，无需轮询或重复提交。"
+    "本工具用于复用固定方案；需要自由选择底模、LoRA 或采样参数时调用 comfyui_draw。"
+    + _ASYNC_GENERATION_HINT
 )
 
 
@@ -3316,7 +3323,11 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
         if kind in {"model", "lora"}:
             if self.client is None:
                 return "查询失败：ComfyUI 未配置。"
-            resources, _ = await self.client.list_resources()
+            if kind == "model":
+                # Model names do not need a full LoRA metadata/header scan.
+                resources = await self.client.generation_resources()
+            else:
+                resources, _ = await self.client.list_resources()
             return _resource_page(self.client, resources, kind, query,
                                   str(kwargs.get("model_family") or ""), kwargs.get("limit", 5),
                                   kwargs.get("offset", 0), _as_bool(kwargs.get("include_unknown")))

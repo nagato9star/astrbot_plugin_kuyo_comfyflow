@@ -33,6 +33,23 @@ class LocalSink:
         self.conversation_manager = LocalConversation()
         self.messages = []
 
+    def get_config(self, **kwargs):
+        from astrbot.core.config.default import DEFAULT_CONFIG
+
+        config = copy.deepcopy(DEFAULT_CONFIG)
+        config["platform_settings"]["reply_with_mention"] = False
+        config["platform_settings"]["reply_with_quote"] = False
+        config["platform_settings"]["segmented_reply"]["enable"] = False
+        config["provider_tts_settings"]["enable"] = False
+        config["t2i"] = False
+        return config
+
+    def get_using_tts_provider(self, umo=None):
+        return None
+
+    async def get_using_tts_provider_async(self, umo=None):
+        return None
+
     async def send_message(self, umo, chain):
         from astrbot.api.message_components import Image, Plain
 

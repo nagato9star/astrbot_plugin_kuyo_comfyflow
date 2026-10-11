@@ -185,7 +185,11 @@ def normalize_lora_strength(value: Any, default: float = 0.8) -> float:
 
 
 def _is_link(val: Any) -> bool:
-    return isinstance(val, list) and val and not isinstance(val[0], dict)
+    return (
+        isinstance(val, list) and len(val) == 2
+        and isinstance(val[0], (str, int)) and not isinstance(val[0], bool)
+        and isinstance(val[1], int) and not isinstance(val[1], bool) and val[1] >= 0
+    )
 
 
 def _is_int_node(node: dict | None) -> bool:
@@ -573,7 +577,7 @@ def node_matches_slot(node: dict, slot: str) -> bool:
 
 
 def _linked_node_id(wf: dict, value: Any) -> str | None:
-    if not isinstance(value, list) or len(value) < 2 or not isinstance(value[1], int):
+    if not _is_link(value):
         return None
     nid = str(value[0])
     return nid if nid in wf else None
@@ -626,17 +630,29 @@ def _edit_canvas_switch(wf: dict, sampler_ids: list[str], edit_id: str) -> str |
     return None
 
 
-def _edit_branch_slots(wf: dict) -> dict[str, dict] | None:
+def _output_node_ids(wf: dict, object_info: dict | None = None) -> list[str]:
+    """Prefer final outputs over preview branches; honor custom-node schemas."""
+    finals, previews = [], []
+    for nid, node in wf.items():
+        if not isinstance(node, dict):
+            continue
+        cls = node.get("class_type")
+        if cls == "PreviewImage":
+            previews.append(str(nid))
+        elif cls in {"SaveImage", "SaveImageAdvanced", "SaveImageWithAlpha", "SwarmSaveImageWS"} or (
+            ((object_info or {}).get(cls) or {}).get("output_node") is True
+        ):
+            finals.append(str(nid))
+    return finals or previews
+
+
+def _edit_branch_slots(wf: dict, object_info: dict | None = None) -> dict[str, dict] | None:
     """Map only the Qwen edit branch that reaches an image output.
 
     None means there is no active Qwen edit branch. An empty result means the
     branch is ambiguous, so the user must provide a workflow profile/config.
     """
-    output_ids = [
-        str(nid) for nid, node in wf.items()
-        if isinstance(node, dict) and node.get("class_type") in
-        {"SaveImage", "SaveImageAdvanced", "SaveImageWithAlpha", "PreviewImage"}
-    ]
+    output_ids = _output_node_ids(wf, object_info)
     active = _upstream_ids(wf, output_ids) if output_ids else set(wf)
     edit_ids = [
         str(nid) for nid, node in wf.items()
@@ -662,6 +678,8 @@ def _edit_branch_slots(wf: dict) -> dict[str, dict] | None:
             slots["prompt"] = _slot(prompt_id, wf, "prompt")
     elif isinstance(edit_inputs.get("prompt"), str):
         slots["prompt"] = _slot(edit_id, wf, "prompt")
+    if isinstance(edit_inputs.get("negative_prompt"), str) or _is_link(edit_inputs.get("negative_prompt")):
+        slots["negative"] = {"node": edit_id, "field": "negative_prompt", "mode": "append"}
 
     image_inputs = [
         (key, value) for key, value in edit_inputs.items()
@@ -758,22 +776,49 @@ def _edit_branch_slots(wf: dict) -> dict[str, dict] | None:
     return slots
 
 
-def detect_slots(wf: dict) -> dict[str, dict]:
-    """自动建议槽位。结果必须给人确认后写入配方，运行时不再调用。"""
-    edit_slots = _edit_branch_slots(wf)
+def detect_slots(wf: dict, object_info: dict | None = None) -> dict[str, dict]:
+    """Suggest unambiguous slots on the final output graph; manual mappings win."""
+    edit_slots = _edit_branch_slots(wf, object_info)
     if edit_slots is not None:
         return edit_slots
     slots: dict[str, dict] = {}
-    roles = _find_prompt_roles(wf)
+    active = _upstream_ids(wf, _output_node_ids(wf, object_info))
+    scoped = {nid: node for nid, node in wf.items() if str(nid) in active} if active else wf
+    sampler_ids = _rank_sampler_ids(scoped)
+    positive_roots, negative_roots, model_roots, latent_roots = [], [], [], []
+    for sid in sampler_ids:
+        ins = wf[sid].get("inputs") or {}
+        for field, roots in (
+            ("positive", positive_roots), ("negative", negative_roots),
+            ("model", model_roots), ("guider", model_roots),
+            ("latent_image", latent_roots), ("latent", latent_roots),
+        ):
+            root = _linked_node_id(wf, ins.get(field))
+            if root:
+                roots.append(root)
+        guider = _linked_node_id(wf, ins.get("guider"))
+        if guider:
+            for field, roots in (("positive", positive_roots), ("conditioning", positive_roots), ("negative", negative_roots)):
+                root = _linked_node_id(wf, (wf[guider].get("inputs") or {}).get(field))
+                if root:
+                    roots.append(root)
+    graph_bound = bool(positive_roots or model_roots)
+    # Legacy/incomplete templates without sampler links retain their suggestions.
+    if not graph_bound:
+        scoped = wf
+    positive_ids = _upstream_ids(wf, positive_roots)
+    prompt_graph = {nid: node for nid, node in scoped.items() if str(nid) in positive_ids} if positive_roots else scoped
+    encoders = [nid for nid, node in prompt_graph.items() if node.get("class_type") in {"CLIPTextEncode", "CLIPTextEncodeSDXL"}]
+    roles = _find_prompt_roles(prompt_graph) if len(encoders) <= 1 else {}
+    if positive_roots and len(encoders) == 1 and not roles.get("main"):
+        # A positive conditioning edge is stronger evidence than prompt wording.
+        encoder = prompt_graph[encoders[0]]
+        if infer_field(encoder, "prompt") in (encoder.get("inputs") or {}):
+            roles["main_alt"] = encoders[0]
     if roles.get("main"):
         slots["prompt"] = _slot(roles["main"], wf, "prompt")
     elif roles.get("main_alt"):
         slots["prompt"] = _slot(roles["main_alt"], wf, "prompt")
-    active = _upstream_ids(
-        wf,
-        [str(nid) for nid, node in wf.items() if isinstance(node, dict)
-         and node.get("class_type") in {"SaveImage", "SaveImageAdvanced", "SaveImageWithAlpha", "PreviewImage"}],
-    )
     source_image_ids = [
         str(nid) for nid, node in wf.items()
         if isinstance(node, dict) and node.get("class_type") == "LoadImage"
@@ -792,37 +837,47 @@ def detect_slots(wf: dict) -> dict[str, dict]:
     if roles.get("triggers"):
         slots["trigger_words"] = _slot(roles["triggers"], wf, "trigger_words")
 
-    neg = _find_negative_node(wf)
+    neg = _unique_class_on_path(wf, negative_roots, SLOT_CLASS_HINTS["negative"]) if negative_roots else _find_negative_node(scoped)
     if neg:
         slots["negative"] = _slot(neg, wf, "negative", mode="append")
 
-    model_id = _first_class(wf, SLOT_CLASS_HINTS["model"])
+    model_id = _unique_class_on_path(wf, model_roots, SLOT_CLASS_HINTS["model"]) if graph_bound else _first_class(scoped, SLOT_CLASS_HINTS["model"])
     if model_id:
         slots["model"] = _slot(model_id, wf, "model")
 
-    clip_id = _first_class(wf, SLOT_CLASS_HINTS["clip"])
+    clip_id = _unique_class_on_path(scoped, list(prompt_graph), SLOT_CLASS_HINTS["clip"]) if graph_bound else _first_class(scoped, SLOT_CLASS_HINTS["clip"])
     if clip_id:
         slots["clip"] = _slot(clip_id, wf, "clip")
 
-    vae_id = _first_class(wf, SLOT_CLASS_HINTS["vae"])
+    vae_id = _unique_class_on_path(scoped, list(scoped), SLOT_CLASS_HINTS["vae"]) if graph_bound else _first_class(scoped, SLOT_CLASS_HINTS["vae"])
     if vae_id:
         slots["vae"] = _slot(vae_id, wf, "vae")
 
-    guidance_id = _first_class(wf, SLOT_CLASS_HINTS["guidance"])
+    guidance_id = _unique_class_on_path(prompt_graph, list(prompt_graph), SLOT_CLASS_HINTS["guidance"]) if graph_bound else _first_class(scoped, SLOT_CLASS_HINTS["guidance"])
     if guidance_id:
         slots["guidance"] = _slot(guidance_id, wf, "guidance")
 
-    lora_id = _first_class(wf, (POWER_LORA_CLASS,)) or _first_class(
-        wf, SLOT_CLASS_HINTS["loras"]
-    )
+    # Model-only loaders may be fixed accelerators. They require explicit ownership.
+    lora_id = _unique_class_on_path(wf, model_roots, (POWER_LORA_CLASS,)) if graph_bound else _first_class(scoped, (POWER_LORA_CLASS,))
+    if not lora_id:
+        lora_id = _unique_class_on_path(wf, model_roots, ("LoraLoader",)) if graph_bound else _first_class(scoped, ("LoraLoader",))
     if lora_id:
         slots["loras"] = _slot(lora_id, wf, "loras")
 
-    size_id = _first_class(wf, SLOT_CLASS_HINTS["size"])
+    size_id = _unique_class_on_path(wf, latent_roots, SLOT_CLASS_HINTS["size"]) if graph_bound else _first_class(scoped, SLOT_CLASS_HINTS["size"])
     if size_id:
         slots["size"] = _slot(size_id, wf, "size")
 
-    sampler_ids = _rank_sampler_ids(wf)
+    sampler_ids = _rank_sampler_ids(scoped)
+    if graph_bound:
+        sampler_ids = [sid for sid in sampler_ids if wf[sid].get("class_type") != "KSamplerSelect"]
+        independent = [sid for sid in sampler_ids if not any(sid in _upstream_ids(wf, [other]) for other in sampler_ids if sid != other)]
+        if len(independent) > 1:
+            # Multiple independent outputs have no safe single generation target.
+            logger.warning("[slot_mapping] Multiple generation branches require manual mappings")
+            return {}
+        sampler_set = set(sampler_ids)
+        sampler_ids.sort(key=lambda sid: len(sampler_set & _upstream_ids(wf, [sid])))
     if sampler_ids:
         slots["sampler"] = _slot(sampler_ids[0], wf, "sampler")
         if len(sampler_ids) > 1:
@@ -1470,6 +1525,18 @@ def _write_text(wf: dict, spec: dict, text: str, *, role: str) -> None:
         return
     field = spec.get("field") or infer_field(node, role)
     ins = node.setdefault("inputs", {})
+    seen = {str(spec["node"])}
+    while _is_link(ins.get(field)):
+        target_id = _linked_node_id(wf, ins[field])
+        if target_id is None or target_id in seen:
+            raise ValueError(f"{role} 文本映射的连线无效，请重新确认节点映射")
+        seen.add(target_id)
+        node = wf[target_id]
+        ins = node.setdefault("inputs", {})
+        fields = [key for key in ("prompt", "text", "string", "value") if isinstance(ins.get(key), str) or _is_link(ins.get(key))]
+        if len(fields) != 1:
+            raise ValueError(f"{role} 文本由多个输入组合，请映射实际可编辑的文本节点")
+        field = fields[0]
     mode = spec.get("mode") or ("append" if role in ("negative", "quality") else "replace")
     if mode == "append":
         existing = str(ins.get(field) or "").strip()

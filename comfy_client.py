@@ -1285,13 +1285,15 @@ class ComfyUIClient:
             "clip_name": [],
             "vae_name": [],
         }
+        seen = {field: set() for field in out}
 
         def append_options(target: str, raw: Any) -> None:
             if not isinstance(raw, list) or not raw:
                 return
             options = raw[0] if isinstance(raw[0], list) else []
             for value in options:
-                if isinstance(value, str) and value and value not in out[target]:
+                if isinstance(value, str) and value and value not in seen[target]:
+                    seen[target].add(value)
                     out[target].append(value)
 
         # 同时扫 required/optional，兼容自定义节点把模型选择器声明在 optional 的情况。
@@ -1334,7 +1336,7 @@ class ComfyUIClient:
         if not self.cache_file:
             return self._memory_cache
         if not self.cache_file.exists():
-            return None
+            return self._memory_cache
         try:
             stat = self.cache_file.stat()
             stamp = (stat.st_mtime_ns, stat.st_size)
@@ -1344,10 +1346,10 @@ class ComfyUIClient:
             if isinstance(data, dict) and isinstance(data.get("resources"), dict):
                 self._memory_cache, self._cache_stamp = data, stamp
                 return data
-            return None
+            return self._memory_cache
         except (OSError, json.JSONDecodeError) as e:
             logger.warning(f"[ComfyUIDirect] 读取模型缓存失败: {e}")
-            return None
+            return self._memory_cache
 
 
     def _save_cache(self, data: dict) -> None:
@@ -1505,12 +1507,37 @@ class ComfyUIClient:
                 if obj:
                     resources = self._extract_resources(obj)
                     previous = (cached or {}).get("resources", {})
+                    available = set()
+                    for definition in obj.values():
+                        if not isinstance(definition, dict):
+                            continue
+                        inputs = definition.get("input") or {}
+                        for section in ("required", "optional"):
+                            section_inputs = inputs.get(section) or {}
+                            if not isinstance(section_inputs, dict):
+                                continue
+                            for field, spec in section_inputs.items():
+                                if field in RESOURCE_INPUT_TARGETS and isinstance(spec, list) and spec and isinstance(spec[0], list):
+                                    available.add(RESOURCE_INPUT_TARGETS[field])
+                    # A partial /object_info response cannot erase absent catalogs.
+                    # An explicitly present empty enum remains an authoritative removal.
+                    for field in resources:
+                        if field not in available and field in previous:
+                            resources[field] = copy.deepcopy(previous[field])
                     resources["embeddings"] = previous.get("embeddings", [])
                     resources["model_meta"] = {name: info for name, info in previous.get("model_meta", {}).items()
                                                if name in resources.get("unet_name", [])}
                     resources["lora_meta"] = {name: info for name, info in previous.get("lora_meta", {}).items()
                                               if name in resources.get("lora_name", [])}
-                    cached = {"fetched_at": time.time(), "resources": resources, "lora_metadata_v3": False}
+                    same_loras = set(resources["lora_name"]) == set(previous.get("lora_name") or [])
+                    refresh_loras = "lora_name" in available
+                    retain_enrichment = same_loras and not (force_refresh and refresh_loras)
+                    cached = {
+                        **(cached or {}), "fetched_at": time.time(), "resources": resources,
+                        "lora_metadata_v3": bool(retain_enrichment and not refresh_loras and (cached or {}).get("lora_metadata_v3")),
+                        "lora_metadata_v4": bool(retain_enrichment and (cached or {}).get("lora_metadata_v4")),
+                        "lora_catalog_ready": bool(retain_enrichment and not refresh_loras and (cached or {}).get("lora_catalog_ready")),
+                    }
                     self._save_cache(cached)
             resources = copy.deepcopy((cached or {}).get("resources", {
                 "unet_name": [], "lora_name": [], "clip_name": [], "vae_name": [], "lora_meta": {},
@@ -1549,9 +1576,10 @@ class ComfyUIClient:
                     merged = updated["resources"].setdefault("lora_meta", {})
                     for name, info in metadata.items():
                         merged[name] = {**merged.get(name, {}), **info}
-                    updated["resources"]["embeddings"] = embeddings or []
+                    if embeddings is not None:
+                        updated["resources"]["embeddings"] = embeddings
                     updated["lora_metadata_v3"] = full
-                    updated["lora_metadata_v4"] = full
+                    updated["lora_metadata_v4"] = full or bool(updated.get("lora_metadata_v4"))
                     updated["lora_catalog_ready"] = True
                     self._save_cache(updated)
         except Exception as e:

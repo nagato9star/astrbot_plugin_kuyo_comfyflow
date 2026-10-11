@@ -52,6 +52,7 @@ for _pkg_prefix in ("", "astrbot_plugin_comfyui_direct.", "astrbot_plugin_kuyo_c
         "character_tags",
         "generation_support",
         "generation_queue",
+        "completion_reply",
         "execution_events",
         "animadex",
         "api_to_ui",
@@ -503,9 +504,24 @@ class ComfyUIDirectPlugin(Star):
         self._generation_queue.end_turn(event)
 
     async def _manage_image_cache(self, action: str) -> dict:
+        protected_paths = {
+            path
+            for job in self._generation_queue.jobs.values()
+            if job.get("delivery_state") in {"pending", "sending", "unknown"}
+            for path in job.get("paths", [])
+        }
+        if action in {"expired", "status"}:
+            shared = self._generation_queue.shared
+            protected_paths.update(shared.get("last_image_paths", {}).values())
+            protected_paths.update(
+                result["path"]
+                for result in shared.get("web_result_cache", {}).values()
+                if result.get("path")
+            )
         return await asyncio.to_thread(
             manage_cache, self._output_dir, action=action,
             days=self._cache_days, max_mb=self._cache_max_mb,
+            protected_paths=protected_paths,
         )
 
     async def _cache_cleanup_loop(self) -> None:

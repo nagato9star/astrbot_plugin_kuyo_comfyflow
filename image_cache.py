@@ -7,6 +7,7 @@ import os
 import tempfile
 import threading
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 _LOCK = threading.Lock()
@@ -22,24 +23,37 @@ def save_image(root: Path, filename: str, content: bytes) -> Path:
     with _LOCK:
         root = root.resolve()
         root.mkdir(parents=True, exist_ok=True)
-        target = root / (hashlib.sha256(content).hexdigest() + suffix)
+        digest = hashlib.sha256(content).hexdigest()
+        target = root / (digest + suffix)
         if target.is_symlink():
             raise ValueError("缓存目标不能为符号链接")
-        if target.is_file():
+        if (
+            target.is_file()
+            and hashlib.sha256(target.read_bytes()).hexdigest() == digest
+        ):
             target.touch()
             return target
         fd, name = tempfile.mkstemp(dir=root, suffix=".tmp")
         try:
             with os.fdopen(fd, "wb") as stream:
                 stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
             os.replace(name, target)
         finally:
             Path(name).unlink(missing_ok=True)
         return target
 
 
-def manage_cache(root: Path, *, action: str = "status", days: int = 7,
-                 max_mb: int = 1024, now: float | None = None) -> dict:
+def manage_cache(
+    root: Path,
+    *,
+    action: str = "status",
+    days: int = 7,
+    max_mb: int = 1024,
+    now: float | None = None,
+    protected_paths: Iterable[str | Path] = (),
+) -> dict:
     """Inspect or prune image files only; protect recently saved images during sending."""
     if action not in {"status", "clear", "expired"}:
         raise ValueError("未知缓存操作")
@@ -47,10 +61,15 @@ def manage_cache(root: Path, *, action: str = "status", days: int = 7,
     removed = freed = protected = errors = 0
     with _LOCK:
         root = root.resolve()
+        pinned = {Path(path).resolve() for path in protected_paths if path}
         rows = []
         for path in root.iterdir() if root.exists() else []:
             try:
-                if path.is_symlink() or not path.is_file() or path.suffix.lower() not in _IMAGE_SUFFIXES:
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or path.suffix.lower() not in _IMAGE_SUFFIXES
+                ):
                     continue
                 stat = path.stat()
                 rows.append((stat.st_mtime, path, stat.st_size))
@@ -58,10 +77,10 @@ def manage_cache(root: Path, *, action: str = "status", days: int = 7,
                 errors += 1
         total = sum(row[2] for row in rows)
         for modified, path, size in sorted(rows):
-            if action == "status":
-                break
-            if now - modified < SEND_GRACE_SECONDS:
+            if path in pinned or now - modified < SEND_GRACE_SECONDS:
                 protected += 1
+                continue
+            if action == "status":
                 continue
             expired = days > 0 and now - modified >= days * 86400
             over_limit = max_mb > 0 and total > max_mb * 1024 * 1024
@@ -74,5 +93,11 @@ def manage_cache(root: Path, *, action: str = "status", days: int = 7,
                 removed += 1
                 freed += size
                 total -= size
-        return {"files": len(rows) - removed, "bytes": total, "removed": removed,
-                "freed": freed, "protected": protected, "errors": errors}
+        return {
+            "files": len(rows) - removed,
+            "bytes": total,
+            "removed": removed,
+            "freed": freed,
+            "protected": protected,
+            "errors": errors,
+        }
