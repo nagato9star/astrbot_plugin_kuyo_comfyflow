@@ -9,13 +9,17 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
 
 from comfy_client import execution_error_message
 from image_cache import save_image
+
+if TYPE_CHECKING:
+    from astrbot.api.provider import LLMResponse
+    from completion_reply import CompletionEvent
 
 ACTIVE = {"queued", "submitting", "running", "downloading"}
 TERMINAL = {"completed", "failed", "cancelled", "uncertain"}
@@ -218,6 +222,17 @@ class GenerationQueue:
                 "sender_id": str(event.get_sender_id())
                 if hasattr(event, "get_sender_id")
                 else "",
+                "sender_name": event.get_sender_name()
+                if hasattr(event, "get_sender_name")
+                else "",
+                "sender_role": getattr(event, "role", "member"),
+                "self_id": event.get_self_id() if hasattr(event, "get_self_id") else "",
+                "group_id": event.get_group_id()
+                if hasattr(event, "get_group_id")
+                else "",
+                "message_id": str(
+                    getattr(getattr(event, "message_obj", None), "message_id", "")
+                ),
                 "platform_name": str(event.get_platform_name())
                 if hasattr(event, "get_platform_name")
                 else umo.split(":", 1)[0],
@@ -239,7 +254,7 @@ class GenerationQueue:
             self.events[identifier] = (event, self.turns.get(id(event)))
             self.shared.setdefault("last_job_ids", {})[umo] = identifier
             self.pending.put_nowait(identifier)
-        return f"任务 {identifier} 已加入生成队列。完成后会自动发送图片并通知，无需反复查询。"
+        return "已加入生成队列，完成后自动发送图片并通知。可以继续聊天，无需轮询。"
 
     def find(self, identifier: str, umo: str) -> dict | None:
         if not identifier:
@@ -495,17 +510,24 @@ class GenerationQueue:
                 raise RuntimeError("无法找到原会话的平台。")
             await original[0].send(chain)
 
-    async def _reply(self, job: dict, summary: str) -> str:
+    async def _reply(
+        self, job: dict, summary: str, event: CompletionEvent
+    ) -> LLMResponse | None:
+        from astrbot.api.provider import ProviderRequest
+        from astrbot.core.pipeline.context import call_event_hook
+        from astrbot.core.star.star_handler import EventType
+
         if not self.notify_llm:
-            return summary
+            return None
         manager = self.context.conversation_manager
         cid = job.get("cid")
         if not cid or await manager.get_curr_conversation_id(job["umo"]) != cid:
-            return summary  # A new/deleted conversation must not inherit an old job's history.
+            # A new/deleted conversation must not inherit an old job's history.
+            return None
         conversation = await manager.get_conversation(job["umo"], cid)
         if conversation is None:
-            return summary
-        config = self.context.get_config(umo=job["umo"]) or {}
+            return None
+        config = event.config
         settings = config.get("provider_settings") or {}
         persona_manager = self.context.persona_manager
         _, persona, _, _ = await persona_manager.resolve_selected_persona(
@@ -515,27 +537,44 @@ class GenerationQueue:
             provider_settings=settings,
         )
         system = (persona or {}).get("prompt", "")
-        system += "\n收到插件后台任务结果，请结合原对话简短告知用户，并保留任务编号。图片发送状态以任务事件为准；无需再次生图或发送图片。"
+        system += "\n收到插件后台任务结果，请结合原对话和人格自然、简短地回应用户。内部任务编号仅供查询或排错，日常回复无需提及；用户明确询问编号时才提供。图片发送状态以任务事件为准；无需再次生图或发送图片。"
         prompt = "[ComfyUI 后台任务事件]\n" + summary
+        request = ProviderRequest(
+            prompt=prompt,
+            session_id=job["umo"],
+            contexts=json.loads(conversation.history),
+            system_prompt=system,
+            conversation=conversation,
+        )
+        event.set_extra("provider_request", request)
+        if await call_event_hook(event, EventType.OnLLMRequestEvent, request):
+            return None
+        options = {}
+        if request.model:
+            options["model"] = request.model
+        if request.extra_user_content_parts:
+            options["extra_user_content_parts"] = request.extra_user_content_parts
         response = await self.context.llm_generate(
             chat_provider_id=await self.context.get_current_chat_provider_id(
                 job["umo"]
             ),
-            prompt=prompt,
-            contexts=json.loads(conversation.history),
-            system_prompt=system,
+            prompt=request.prompt,
+            image_urls=request.image_urls,
+            audio_urls=request.audio_urls,
+            contexts=request.contexts,
+            system_prompt=request.system_prompt,
+            **options,
         )
         text = str(response.completion_text or "").strip()
         if not text:
             raise RuntimeError("LLM 未返回通知文本。")
-        job["history_pair"] = [
-            {"role": "user", "content": prompt},
-            {"role": "assistant", "content": text},
-        ]
-        return text
+        return response
 
     async def _deliver(self, job: dict) -> None:
         try:
+            from astrbot.api.provider import LLMResponse
+            from completion_reply import CompletionEvent, send_completion_reply
+
             original = self.events.get(job["id"])
             if original and original[1]:
                 await original[1].wait()
@@ -548,28 +587,40 @@ class GenerationQueue:
                     self.shared.setdefault("last_image_paths", {})[job["umo"]] = job[
                         "paths"
                     ][0]
-                summary = f"任务 {job['id']} {LABELS[job['state']]}。"
+                notice = f"生图任务{LABELS[job['state']]}。"
                 if job["paths"]:
-                    summary += (
-                        f"图片已发送，共 {len(job['paths'])} 张。本地路径："
-                        + ", ".join(job["paths"])
-                    )
+                    notice += f"图片已发送，共 {len(job['paths'])} 张。"
                 if job.get("error"):
-                    summary += "\n" + job["error"]
+                    notice += "\n" + job["error"]
                 if job.get("note"):
-                    summary += "\n" + job["note"]
+                    notice += "\n" + job["note"]
+                summary = notice
+                if job["paths"]:
+                    summary += "\n本地路径：" + ", ".join(job["paths"])
+                event = CompletionEvent(
+                    job,
+                    summary,
+                    self.context.get_config(umo=job["umo"]),
+                    lambda chain: self._send(job, chain),
+                )
                 try:
-                    text = await asyncio.wait_for(
-                        self._reply(job, summary), self.llm_timeout
+                    response = await asyncio.wait_for(
+                        self._reply(job, summary, event), self.llm_timeout
                     )
                 except Exception as error:
+                    detail = str(error) or type(error).__name__
                     logger.warning(
-                        f"[ComfyUIDirect] 任务 {job['id']} LLM 通知失败，使用任务结果: {error}"
+                        f"[ComfyUIDirect] 任务 {job['id']} LLM 通知失败，使用任务结果: {detail}"
                     )
-                    text = summary
-                    job["llm_error"] = str(error)
-                await self._send(job, MessageChain().message(text))
-                if not job.get("history_pair") and job.get("cid"):
+                    response = None
+                    job["llm_error"] = detail
+                from_llm = response is not None
+                if response is None and not event.is_stopped():
+                    response = LLMResponse(role="assistant", completion_text=notice)
+                text = await send_completion_reply(
+                    self.context, event, response, from_llm=from_llm
+                )
+                if text and job.get("cid"):
                     job["history_pair"] = [
                         {
                             "role": "user",

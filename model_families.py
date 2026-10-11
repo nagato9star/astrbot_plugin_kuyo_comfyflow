@@ -424,7 +424,7 @@ class WorkflowProfileStore:
         self._write(profiles)
         return self.get(name) or {"workflow": name, "slots": normalized, "drop_nodes": []}
 
-    def effective(self, workflow: str, wf: dict) -> dict:
+    def effective(self, workflow: str, wf: dict, object_info: dict | None = None) -> dict:
         """配置页映射优先，其次工作台档案，最后采用自动检测结果。"""
         saved = self.get(workflow)
         configured = self.configured(workflow)
@@ -441,7 +441,7 @@ class WorkflowProfileStore:
             drop_nodes = list(saved.get("drop_nodes") or [])
             source = "profile"
         else:
-            slots = detect_slots(wf)
+            slots = detect_slots(wf, object_info)
             drop_nodes = list(ANIMA_DROP_NODES) if looks_like_anima(wf) else []
             source = "detected"
         return {

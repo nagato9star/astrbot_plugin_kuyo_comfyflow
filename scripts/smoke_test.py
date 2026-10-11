@@ -796,6 +796,7 @@ def test_qwen_edit_upload_and_output_path() -> None:
             fourth = await tool.call(context, model_family="qwen", prompt="restore colors")
             assert "图片已编辑并发送" in fourth and client.uploads[-1][1] == png
             assert event.sent == 4
+            assert client.uploads[0][0] == client.uploads[3][0], "identical edit inputs must keep their remote filename"
 
             event.message_obj.message = [Image(source), Image(source)]
             before = len(client.uploads)
@@ -1974,7 +1975,7 @@ def test_studio_recipe_workflow_independence() -> None:
                     draw_tool, recipe_tool, edit_tool, families, profiles,
                     plugin_config=config,
                 )
-                assert "/astrbot_plugin_comfyui_direct/workflow/bind" in routes
+                assert f"/{webapi_module.PLUGIN_NAME}/workflow/bind" in routes
 
                 body.update({
                     "name": "静态配方", "family": "qwen", "defaults": {"steps": 18},

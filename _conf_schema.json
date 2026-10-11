@@ -42,13 +42,13 @@
     "type": "bool",
     "default": true,
     "description": "完成后调用 LLM 回复",
-    "hint": "图片发送后，携带原对话历史和人格调用 LLM 告知任务结果。关闭时直接发送任务结果。对话已切换或删除时直接通知，避免写入新对话。"
+    "hint": "图片发送后，携带原对话历史和人格自然回复，并遵循分段与清理插件。关闭时发送简短结果通知。对话已切换或删除时通知原会话，避免写入新对话。"
   },
   "generation_notify_timeout": {
     "type": "int",
     "default": 60,
     "description": "完成通知的 LLM 超时（秒）",
-    "hint": "LLM 超时或失败时直接发送任务结果，已生成图片仍会交付。"
+    "hint": "LLM 超时或失败时发送简短结果通知，继续遵循分段与清理设置；已生成图片仍会交付。"
   },
   "model_cache_ttl": {
     "type": "int",
@@ -603,7 +603,7 @@
     "type": "bool",
     "default": true,
     "description": "自动清理图片缓存",
-    "hint": "启动及每小时按保留天数和容量清理 plugin_data 下的 output 图片；最近 5 分钟文件保留以供发送。"
+    "hint": "启动及每小时清理 output 图片。保留待通知任务、会话最近输出、工作台缓存结果和最近 5 分钟文件。"
   },
   "image_cache_days": {
     "type": "int",
@@ -615,7 +615,7 @@
     "type": "int",
     "default": 1024,
     "description": "图片缓存容量上限（MiB）",
-    "hint": "0 不限制容量；超限时优先清理最久未使用的图片。近期保护文件可能暂时超限。手动 expired 也遵循此配置。"
+    "hint": "0 不限制容量；超限时优先清理最久未使用且未被引用的图片。受保护文件可能暂时超限。手动 expired 也遵循此配置。"
   },
   "resource_family_rules": {
     "type": "template_list",

@@ -7,7 +7,6 @@ import base64
 import copy
 import json
 import random
-import uuid
 from pathlib import Path
 from typing import Any
 
@@ -196,7 +195,7 @@ class StudioApi:
 
     def _workflow_payload(self, name: str, wf: dict) -> dict:
         refresh_config_options(self.plugin_config, self.builder, self.store)
-        detected = detect_slots(wf)
+        detected = detect_slots(wf, getattr(self.client, "_object_info", None))
         profile = (
             self.profiles.effective(name, wf)
             if self.profiles is not None
@@ -399,7 +398,7 @@ class StudioApi:
             wf = self.builder.load_template(name)
         except FileNotFoundError as e:
             return _json({"ok": False, "error": str(e)})
-        detected = detect_slots(wf)
+        detected = detect_slots(wf, getattr(self.client, "_object_info", None))
         return _json(
             {
                 "ok": True,
@@ -747,7 +746,6 @@ class StudioApi:
                 wf,
                 slots,
                 values,
-                prefix=f"astrbot_{uuid.uuid4().hex[:8]}",
                 drop_nodes=drop_nodes,
             )
         except ValueError as e:

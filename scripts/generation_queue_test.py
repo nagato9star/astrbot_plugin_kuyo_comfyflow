@@ -5,11 +5,62 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import sys
 import tempfile
 import types
 from pathlib import Path
 
 import smoke_test  # noqa: F401 - shared AstrBot stubs
+from astrbot.api.event import AstrMessageEvent
+
+# Queue scheduling remains testable without the SDK; the SDK script exercises
+# the real completion event, hook registry, result decoration and delivery.
+if not hasattr(AstrMessageEvent, "make_result"):
+
+    class Entity(types.SimpleNamespace):
+        def __init__(self, **kwargs):
+            super().__init__(
+                **{
+                    "image_urls": [],
+                    "audio_urls": [],
+                    "extra_user_content_parts": [],
+                    "model": None,
+                    **kwargs,
+                }
+            )
+
+    class CompletionEvent:
+        def __init__(self, job, summary, config, send):
+            self.send = send
+            self.config = config
+
+        def set_extra(self, *args):
+            pass
+
+        def is_stopped(self):
+            return False
+
+    async def call_event_hook(*args):
+        return False
+
+    async def send_completion_reply(context, event, response, **kwargs):
+        await event.send(Chain().message(response.completion_text))
+        return response.completion_text
+
+    sys.modules["astrbot.api.provider"] = types.SimpleNamespace(
+        LLMResponse=Entity, ProviderRequest=Entity
+    )
+    sys.modules["astrbot.core.pipeline.context"] = types.SimpleNamespace(
+        call_event_hook=call_event_hook
+    )
+    sys.modules["astrbot.core.star.star_handler"] = types.SimpleNamespace(
+        EventType=types.SimpleNamespace(OnLLMRequestEvent="request")
+    )
+    sys.modules["completion_reply"] = types.SimpleNamespace(
+        CompletionEvent=CompletionEvent, send_completion_reply=send_completion_reply
+    )
+
+from astrbot.api.provider import LLMResponse  # noqa: E402
 import generation_queue
 from comfy_client import ComfyUIClient
 from generation_queue import GenerationQueue
@@ -67,7 +118,7 @@ class Conversations:
         if cid not in self.history:
             return None
         return types.SimpleNamespace(
-            history=json.dumps(self.history[cid]), persona_id="friendly"
+            cid=cid, history=json.dumps(self.history[cid]), persona_id="friendly"
         )
 
     async def add_message_pair(self, cid, user, assistant):
@@ -85,7 +136,21 @@ class Context:
         self.send_error = False
 
     def get_config(self, **kwargs):
-        return {"provider_settings": {"default_personality": "friendly"}}
+        if not hasattr(AstrMessageEvent, "make_result"):
+            return {"provider_settings": {"default_personality": "friendly"}}
+        from astrbot.core.config.default import DEFAULT_CONFIG
+
+        config = copy.deepcopy(DEFAULT_CONFIG)
+        config["provider_settings"]["default_personality"] = "friendly"
+        config["provider_tts_settings"]["enable"] = False
+        config["t2i"] = False
+        config["platform_settings"]["reply_with_mention"] = False
+        config["platform_settings"]["reply_with_quote"] = False
+        config["platform_settings"]["segmented_reply"]["enable"] = False
+        return config
+
+    def get_using_tts_provider(self, umo):
+        return None
 
     async def resolve_selected_persona(self, **kwargs):
         return "friendly", {"prompt": "friendly persona"}, None, False
@@ -99,12 +164,16 @@ class Context:
             await self.llm_gate.wait()
         if self.llm_error:
             raise RuntimeError("provider offline")
-        return types.SimpleNamespace(completion_text="Your image is ready!")
+        return LLMResponse(role="assistant", completion_text="Your image is ready!")
 
     async def send_message(self, umo, chain):
         if self.send_error:
             raise RuntimeError("platform offline")
-        self.sent.append((umo, chain.items))
+        if hasattr(chain, "items"):
+            items = chain.items
+        else:
+            items = [("text", comp.text) for comp in chain.chain]
+        self.sent.append((umo, items))
         return True
 
 
@@ -216,7 +285,9 @@ async def async_receipt_and_delivery(root):
         origin,
         history={"prompt": "cat", "values": {"seed": 42}},
     )
-    assert "C000001" in receipt and not context.sent and not context.requests
+    assert "已加入生成队列" in receipt and "C000001" not in receipt
+    assert shared["last_job_ids"][origin.unified_msg_origin] == "C000001"
+    assert not context.sent and not context.requests
     await until(lambda: len(client.submissions) == 1)
     await queue.enqueue({}, origin)
     assert "队列已满" in await queue.enqueue({}, origin)
@@ -243,7 +314,7 @@ async def async_receipt_and_delivery(root):
     assert all(item[1:] == ("batch", "output") for item in client.downloads)
     assert sum(kind == "image" for _, items in context.sent for kind, _ in items) == 2
     completion_request = next(
-        request for request in context.requests if "C000001" in request["prompt"]
+        request for request in context.requests if "已完成" in request["prompt"]
     )
     assert completion_request["system_prompt"].startswith("friendly persona")
     assert any(
@@ -251,6 +322,8 @@ async def async_receipt_and_delivery(root):
     )
     assert completion_request["chat_provider_id"] == "original-provider"
     assert "已完成" in completion_request["prompt"]
+    assert "C000001" not in completion_request["prompt"]
+    assert "用户明确询问编号时才提供" in completion_request["system_prompt"]
     history = queue.store.history_get("pid-1")
     assert history["values"]["seed"] == 42 and len(history["local_paths"]) == 2
     assert (
@@ -348,7 +421,11 @@ async def failures_and_cancellation(root):
         job = queue.jobs["C000001"]
         if scenario in {"llm", "llm-timeout"}:
             assert job["state"] == "completed" and "llm_error" in job
-            assert "任务 C000001 已完成" in context.sent[-1][1][0][1]
+            assert "生图任务已完成" in context.sent[-1][1][0][1]
+            assert "C000001" not in context.sent[-1][1][0][1]
+            assert "本地路径" not in context.sent[-1][1][0][1]
+            if scenario == "llm-timeout":
+                assert job["llm_error"] == "TimeoutError"
         elif scenario == "gpu":
             assert job["state"] == "failed" and not client.downloads
         elif scenario == "download":
@@ -432,12 +509,14 @@ async def entrypoints(root):
     raw = ComfyuiRunWorkflowTool(
         client=client, output_dir=root / "output", shared=shared
     )
-    assert "C000001" in await draw.call(
+    assert "已加入生成队列" in await draw.call(
         wrapped, model_family="demo", prompt="cat", save_as="new recipe"
     )
-    assert "C000002" in await recipe.call(wrapped, prompt="dog", recipe="saved")
-    assert "C000003" in await legacy.call(wrapped, prompt="bird", workflow="mini")
-    assert "C000004" in await raw.call(
+    assert "已加入生成队列" in await recipe.call(wrapped, prompt="dog", recipe="saved")
+    assert "已加入生成队列" in await legacy.call(
+        wrapped, prompt="bird", workflow="mini"
+    )
+    assert "已加入生成队列" in await raw.call(
         wrapped, workflow=json.dumps(workflow), wait=True
     )
     edit_workflow = {
@@ -464,7 +543,7 @@ async def entrypoints(root):
     source.write_bytes(PNG)
     from astrbot.api.message_components import Image
 
-    origin.message_obj.message = [Image(source)]
+    origin.message_obj.message = [Image(str(source))]
     edit = ComfyuiEditTool(
         client=client,
         builder=builder,
@@ -476,7 +555,7 @@ async def entrypoints(root):
         profiles=profiles,
     )
     receipt = await edit.call(wrapped, edit_workflow="edit", prompt="change sky")
-    assert "C000005" in receipt, receipt
+    assert "已加入生成队列" in receipt, receipt
     assert client.uploads and not context.sent
     job_tool = ComfyuiJobTool(client=client, shared=shared)
     assert "C000005" in await job_tool.call(wrapped, action="status")
@@ -486,6 +565,12 @@ async def entrypoints(root):
         lambda: all(job["delivery_state"] == "sent" for job in queue.jobs.values())
     )
     assert len(client.submissions) == 5
+    assert all(
+        workflow["6"]["inputs"]["filename_prefix"]
+        == item["6"]["inputs"]["filename_prefix"]
+        for item in client.submissions[:4]
+    )
+    assert client.submissions[4]["3"]["inputs"]["filename_prefix"] == "edit"
     assert queue.store.get("new recipe") is not None
     assert client.submissions[1]["2"]["inputs"]["text"] == "dog"
     assert client.submissions[4]["1"]["inputs"]["image"] == "uploaded.png"

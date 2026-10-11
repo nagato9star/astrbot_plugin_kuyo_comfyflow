@@ -38,7 +38,7 @@ Keep user-specified names, counts, colors, text, and spatial relations. Use the 
 
 ## Reply after a tool call
 
-- Generation and editing tools return a queue task ID such as `C000001`. Tell the user the task has been queued and continue the conversation. Claim completion only after a completion event.
-- The plugin generates in the background, sends the finished images to the original conversation, and calls the LLM with a completion event. Keep the task ID in the completion reply. Do not send the same images again with a second message tool or submit another generation for the completed task.
+- Generation and editing tools return a queued acknowledgement. Respond naturally in character and continue the conversation. Internal task IDs are for tracking; mention them only when the user explicitly asks for an ID or needs troubleshooting. Claim completion only after a completion event.
+- The plugin generates in the background, sends the finished images to the original conversation, and calls the LLM with a completion event. Respond naturally to the result without reciting internal task IDs. Do not send the same images again with a second message tool or submit another generation for the completed task.
 - Completion is automatic. Use `comfyui_job(action="status", task_id=...)` or `action="queue"` when the user asks about progress, and `action="cancel"` when they ask to cancel. Avoid repeated polling; `wait` returns the current state of plugin queue tasks immediately.
 - Report a completion event's local image path when useful. Include a failure message's node, model, or slot detail and request only the missing information needed to continue. A queued receipt has no finished image path yet.
