@@ -44,7 +44,10 @@ class LocalSink:
         config["t2i"] = False
         return config
 
-    def get_using_tts_provider(self, umo):
+    def get_using_tts_provider(self, umo=None):
+        return None
+
+    async def get_using_tts_provider_async(self, umo=None):
         return None
 
     async def send_message(self, umo, chain):

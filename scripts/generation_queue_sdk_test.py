@@ -281,7 +281,17 @@ async def completion_pipeline(root, cases):
 async def run(root):
     import astrbot.api  # noqa: F401 - load the real SDK before the test fixtures
     import generation_queue_test as cases
+    from generation_queue_live_test import LocalSink
     from astrbot.core.utils.session_lock import session_lock_manager
+
+    for mock in (cases.Context(), LocalSink()):
+        assert mock.get_using_tts_provider() is None
+        assert mock.get_using_tts_provider("test:GroupMessage:A") is None
+        assert await mock.get_using_tts_provider_async() is None
+        assert (
+            await mock.get_using_tts_provider_async(umo="test:GroupMessage:A") is None
+        )
+    print("sync/async TTS provider mock contracts OK")
 
     # Run the full queue regressions against real SDK result processing as well.
     await cases.main()

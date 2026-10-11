@@ -149,7 +149,10 @@ class Context:
         config["platform_settings"]["segmented_reply"]["enable"] = False
         return config
 
-    def get_using_tts_provider(self, umo):
+    def get_using_tts_provider(self, umo=None):
+        return None
+
+    async def get_using_tts_provider_async(self, umo=None):
         return None
 
     async def resolve_selected_persona(self, **kwargs):
