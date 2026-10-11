@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import errno
 import json
 import sys
 import tempfile
 import types
 from pathlib import Path
+from unittest.mock import patch
 
 import smoke_test  # noqa: F401 - shared AstrBot stubs
 from astrbot.api.event import AstrMessageEvent
@@ -78,6 +80,7 @@ from tools import (
     ComfyuiJobTool,
     ComfyuiRecipeDrawTool,
     ComfyuiRunWorkflowTool,
+    ComfyuiValidateWorkflowTool,
 )
 from workflow_builder import WorkflowBuilder
 
@@ -581,10 +584,55 @@ async def entrypoints(root):
     await queue.close()
 
 
+async def workflow_loading(root):
+    workflow = {"1": {"class_type": "Demo", "inputs": {"text": "x" * 4096}}}
+    raw = json.dumps(workflow)
+
+    class ValidationClient(Client):
+        async def get_object_info(self, force_refresh=False):
+            return {"Demo": {"input": {"required": {"text": ["STRING"]}}}}
+
+    queue, _, client, shared = make_queue(root / "queue", client=ValidationClient())
+    wrapped = types.SimpleNamespace(context=types.SimpleNamespace(event=event()))
+    run = ComfyuiRunWorkflowTool(client=client, shared=shared)
+    validate = ComfyuiValidateWorkflowTool(client=client)
+    with patch.object(
+        Path, "is_file", side_effect=OSError(errno.ENAMETOOLONG, "File name too long")
+    ) as probe:
+        assert ComfyuiRunWorkflowTool._load_wf("\n " + raw + " \n") == workflow
+        assert "已加入生成队列" in await run.call(wrapped, workflow=raw)
+        assert queue.jobs["C000001"]["workflow"] == workflow
+        assert "校验结果: valid" in await validate.call(wrapped, workflow=raw)
+        probe.assert_not_called()
+        error = await run.call(wrapped, workflow="x" * 4096)
+        assert error.startswith("运行失败：读取工作流文件失败"), error
+        error = await validate.call(wrapped, workflow="x" * 4096)
+        assert error.startswith("校验失败：读取工作流文件失败"), error
+    await queue.close()
+
+    path = root / "workflow.json"
+    path.write_text(raw, encoding="utf-8")
+    assert ComfyuiRunWorkflowTool._load_wf(str(path)) == workflow
+    assert ComfyuiRunWorkflowTool._load_wf("  ") is None
+    for payload in ("[]", "null", "123", "{malformed"):
+        path.write_text(payload, encoding="utf-8")
+        for value in (payload, str(path)):
+            try:
+                ComfyuiRunWorkflowTool._load_wf(value)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError(f"invalid workflow accepted: {payload}")
+    print(
+        "inline/file workflow parsing / Linux ENAMETOOLONG / run and validation tool regressions OK"
+    )
+
+
 async def main():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         try:
+            await workflow_loading(root / "loading")
             await async_receipt_and_delivery(root / "delivery")
             await restart_and_ambiguity(root / "recovery")
             await failures_and_cancellation(root / "failures")

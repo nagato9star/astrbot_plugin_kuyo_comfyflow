@@ -1500,18 +1500,19 @@ class ComfyuiRunWorkflowTool(FunctionTool[AstrAgentContext]):
         raw = (raw or "").strip()
         if not raw:
             return None
-        # 先当路径试
-        p = Path(raw).expanduser()
-        if p.is_file():
-            try:
-                return json.loads(p.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as e:
-                raise ValueError(f"读取工作流文件失败: {e}") from e
-        # 再当 JSON 字符串试
+        # Parse inline JSON before filesystem probing (ENAMETOOLONG on Linux).
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise ValueError(f"workflow 路径与 JSON 格式均无效: {e}") from e
+        except json.JSONDecodeError as inline_error:
+            try:
+                p = Path(raw).expanduser()
+                if not p.is_file():
+                    raise ValueError(
+                        f"workflow 路径与 JSON 格式均无效: {inline_error}"
+                    ) from inline_error
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, RuntimeError, json.JSONDecodeError) as e:
+                raise ValueError(f"读取工作流文件失败: {e}") from e
         if not isinstance(data, dict):
             raise ValueError("workflow JSON 必须是对象（节点 id -> 节点）")
         return data
