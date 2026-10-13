@@ -14,14 +14,14 @@ import httpx
 from aiohttp import web
 
 import smoke_test  # noqa: F401 - the shared AstrBot test environment
-import webapi
-from comfy_client import ComfyUIClient
-from generation_support import fill_trigger_words
-from model_families import ModelFamilyRegistry, WorkflowProfileStore
-from recipe_store import RecipeStore
-from slot_mapping import detect_slots
-from tools import ComfyuiDrawTool, ComfyuiRecipeDrawTool, ComfyuiGenerateTool
-from workflow_builder import WorkflowBuilder
+from comfyflow.studio import api as webapi
+from comfyflow.clients.comfyui import ComfyUIClient
+from comfyflow.workflows.parameters import fill_trigger_words
+from comfyflow.workflows.registry import ModelFamilyRegistry, WorkflowProfileStore
+from comfyflow.storage.recipes import RecipeStore
+from comfyflow.workflows.slots import detect_slots
+from comfyflow.tools import ComfyuiDrawTool, ComfyuiRecipeDrawTool
+from comfyflow.workflows.builder import WorkflowBuilder
 
 PLUGIN = Path(__file__).resolve().parents[1]
 PNG = b"\x89PNG\r\n\x1a\noriginal-bytes"
@@ -429,17 +429,6 @@ async def trigger_and_snapshot(root):
     assert client.submitted[-1]["2"]["inputs"]["text"] == "recipe prompt, known_trigger"
     await recipe.call(context, prompt="blank recipe", recipe="blank")
     assert client.submitted[-1]["2"]["inputs"]["text"] == "blank recipe"
-    legacy = ComfyuiGenerateTool(
-        client=client,
-        builder=builder,
-        profiles=profiles,
-        families=families,
-        store=store,
-        output_dir=root / "output",
-        auto_trigger_words=True,
-    )
-    await legacy.call(context, prompt="legacy prompt", recipe="automatic")
-    assert client.submitted[-1]["2"]["inputs"]["text"] == "legacy prompt, known_trigger"
 
     api = webapi.StudioApi(
         client,

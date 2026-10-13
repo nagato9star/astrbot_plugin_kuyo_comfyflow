@@ -15,6 +15,17 @@ _IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif"}
 SEND_GRACE_SECONDS = 300
 
 
+def reuse_images(paths: Iterable[str | Path]) -> bool:
+    """复用已存在的图片并刷新保留时间，与自动清理使用同一把锁。"""
+    paths = [Path(path) for path in paths if path]
+    with _LOCK:
+        if not paths or not all(path.is_file() for path in paths):
+            return False
+        for path in paths:
+            os.utime(path, None)
+        return True
+
+
 def save_image(root: Path, filename: str, content: bytes) -> Path:
     """Atomically cache bytes by content hash, refreshing retention on reuse."""
     suffix = Path(str(filename).replace("\\", "/")).suffix.lower()

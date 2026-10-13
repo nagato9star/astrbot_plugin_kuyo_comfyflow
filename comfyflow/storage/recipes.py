@@ -14,7 +14,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from slot_mapping import (
+from ..workflows.slots import (
     ANIMA_DROP_NODES,
     detect_slots,
     looks_like_anima,
@@ -471,29 +471,3 @@ def materialize_values(recipe: dict, overrides: dict[str, Any]) -> dict[str, Any
             continue
         values[key] = val
     return values
-
-
-def resolve_generation_entry(
-    recipe_param: str = "",
-    workflow_param: str = "",
-    *,
-    has_default_recipe: bool = False,
-) -> tuple[str, str]:
-    """生成工具双入口判定。
-
-    显式 recipe > 显式 workflow > 默认配方 > 模板。recipe 与 workflow 是两个
-    互不吞并的入口：传 recipe 就把参数填进该配方绑定的基底工作流；传 workflow
-    就按模板生成、不套配方——否则显式指定的 workflow 会被默认配方静默吞掉。
-
-    返回 (entry, name)：entry 为 "recipe" 时 name 是配方名（"" 表示默认配方）；
-    entry 为 "workflow" 时 name 是模板名（"" 表示配置默认模板）。
-    """
-    recipe_param = str(recipe_param or "").strip()
-    workflow_param = str(workflow_param or "").strip()
-    if recipe_param:
-        return "recipe", recipe_param
-    if workflow_param:
-        return "workflow", workflow_param
-    if has_default_recipe:
-        return "recipe", ""
-    return "workflow", ""

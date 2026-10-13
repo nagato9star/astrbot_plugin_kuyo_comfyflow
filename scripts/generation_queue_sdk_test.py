@@ -6,14 +6,77 @@ import asyncio
 import copy
 import importlib.util
 import os
+import ssl
 import sys
 import tempfile
 import time
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 PLUGIN = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PLUGIN))
+
+
+async def qq_official_completion(root, cases):
+    """真实 SDK 消息复用 HTTP 客户端，验证入队到完成通知且不访问网络。"""
+    import aiohttp
+    from botpy.api import BotAPI
+    from botpy.http import BotHttp
+    from botpy.message import Message
+    from astrbot.api.event import MessageChain
+    from astrbot.api.message_components import Image, Plain
+    from astrbot.core.platform.astrbot_message import AstrBotMessage, MessageMember
+    from astrbot.core.platform.platform_metadata import PlatformMetadata
+    from astrbot.core.platform.sources.qqofficial.qqofficial_message_event import QQOfficialMessageEvent
+    from astrbot.core.star.star_handler import star_handlers_registry
+    from comfyflow.generation.reply import CompletionEvent
+
+    http = BotHttp(timeout=30)
+    http._session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl.create_default_context()))
+    queue = None
+    try:
+        api = BotAPI(http)
+        raw = Message(api, "test-event", {"id": "source-message", "content": "draw a cat"})
+        message = AstrBotMessage()
+        message.type = "GroupMessage"
+        message.session_id = message.group_id = "A"
+        message.message_id = "source-message"
+        message.self_id = "bot"
+        message.sender = MessageMember("user-A", "Alice")
+        message.message = [Plain("draw a cat")]
+        message.raw_message = raw
+        source = QQOfficialMessageEvent("draw a cat", message,
+                                       PlatformMetadata("qq_official", "test", "qq_official"), "A", SimpleNamespace(api=api))
+        class QQContext(cases.Context):
+            async def send_message(self, umo, chain):
+                items = [("image", await comp.convert_to_file_path()) if isinstance(comp, Image)
+                         else ("text", comp.text) for comp in chain.chain]
+                self.sent.append((umo, items))
+                return True
+
+        context = QQContext()
+        context.conversation_manager.current[source.unified_msg_origin] = "cid-A"
+        event = CompletionEvent({"id": "C000001", "umo": source.unified_msg_origin}, "done",
+                                context.get_config(), lambda chain: None, original=source)
+        assert isinstance(event, QQOfficialMessageEvent) and event.bot is source.bot
+        assert event.message_obj.raw_message is not raw
+        assert event.message_obj.raw_message._api is api and raw._api is api
+        with (patch.object(cases.generation_queue, "MessageChain", MessageChain),
+              patch.object(star_handlers_registry, "_handlers", [])):
+            queue, _, client, _ = cases.make_queue(root, context=context)
+            client.finished.set()
+            await queue.enqueue({}, source, history={"prompt": "cat"})
+            await cases.until(lambda: queue.jobs["C000001"]["delivery_state"] in {"sent", "failed"} and not queue.delivering)
+            assert queue.jobs["C000001"]["delivery_state"] == "sent", queue.jobs["C000001"]
+            assert len(context.requests) == 1
+            assert sum(kind == "image" for _, items in context.sent for kind, _ in items) == 2
+            assert any(kind == "text" for _, items in context.sent for kind, _ in items)
+        print("real QQOfficial SDK raw message / shared HTTP client / queued completion reply OK")
+    finally:
+        if queue is not None:
+            await queue.close()
+        await http.close()
 
 
 async def completion_pipeline(root, cases):
@@ -296,6 +359,7 @@ async def run(root):
     # Run the full queue regressions against real SDK result processing as well.
     await cases.main()
     await completion_pipeline(root / "completion", cases)
+    await qq_official_completion(root / "qq-official", cases)
 
     queue, context, client, _ = cases.make_queue(root / "locked")
     client.finished.set()
@@ -309,12 +373,35 @@ async def run(root):
     finally:
         await queue.close()
 
-    spec = importlib.util.spec_from_file_location(
-        "queue_sdk_plugin", PLUGIN / "main.py"
-    )
+    package_name = "queue_sdk_plugin"
+    package = ModuleType(package_name)
+    package.__path__ = [str(PLUGIN)]
+    package.__package__ = package_name
+    sys.modules[package_name] = package
+    spec = importlib.util.spec_from_file_location(package_name + ".main", PLUGIN / "main.py")
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    reload_names = {"image_cache": "storage.images", "completion_reply": "generation.reply",
+                    "completion_hooks": "generation.hooks", "completion_transport": "generation.transport",
+                    "task_receipt": "generation.receipts", "output_recovery": "generation.recovery",
+                    "lookup_sources": "resources.sources"}
+    prefix = package_name + ".comfyflow."
+    old_modules = {name: importlib.import_module(prefix + path) for name, path in reload_names.items()}
+    unrelated = ModuleType("other_plugin.comfyflow.fixture")
+    sys.modules[unrelated.__name__] = unrelated
+    standalone_images = importlib.import_module("comfyflow.storage.images")
+    spec.loader.exec_module(module)
+    reloaded = {name: importlib.import_module(prefix + path) for name, path in reload_names.items()}
+    assert sys.modules.pop(unrelated.__name__) is unrelated
+    assert importlib.import_module("comfyflow.storage.images") is standalone_images
+    assert all(reloaded[name] is not old_modules[name] for name in reload_names)
+    assert reloaded["output_recovery"].reuse_images is reloaded["image_cache"].reuse_images
+    assert reloaded["output_recovery"].save_image is reloaded["image_cache"].save_image
+    assert reloaded["output_recovery"].reuse_images.__globals__["_LOCK"] is reloaded["image_cache"]._LOCK
+    assert module.clean_task_result is reloaded["task_receipt"].clean_task_result
+    assert reloaded["completion_reply"].finish_completion is reloaded["completion_hooks"].finish_completion
+    print("real SDK hot reload / fresh helper modules / shared image cache lock OK")
 
     class PluginContext(cases.Context):
         def add_llm_tools(self, *tools):
@@ -324,14 +411,41 @@ async def run(root):
             pass
 
     context = PluginContext()
+    workflow_dir = root / "plugin" / "workflows"
+    workflow_dir.mkdir(parents=True)
+    (workflow_dir / "mini.json").write_bytes(
+        (PLUGIN / "scripts" / "fixtures" / "mini_workflow.json").read_bytes()
+    )
     with (
         patch.object(module.StarTools, "get_data_dir", return_value=root / "plugin"),
         patch.object(module.ComfyUIClient, "start_events"),
         patch.object(module.ComfyUIClient, "start_warmup"),
     ):
-        plugin = module.ComfyUIDirectPlugin(context, {"image_cache_auto_clean": False})
+        plugin = module.ComfyUIDirectPlugin(
+            context,
+            {
+                "image_cache_auto_clean": False,
+                "llm_tool_mode": "full",
+                "allow_llm_unsafe_tools": True,
+                "model_families": [{"name": "demo", "workflow": "mini"}],
+                "default_steps": 12,
+            },
+        )
         try:
             await plugin.initialize()
+            migrated = plugin._store.default()
+            assert migrated["family"] == "demo" and migrated["defaults"]["steps"] == 12
+            names = {tool.name for tool in context.tools}
+            assert len(names) == 13
+            assert not names & {
+                "comfyui_run_workflow", "comfyui_generate", "comfyui_interrupt",
+                "comfyui_queue", "comfyui_fetch_outputs", "comfyui_list_models",
+                "comfyui_models_search", "comfyui_booru", "comfyui_animadex",
+            }
+            assert {
+                "comfyui_draw", "comfyui_recipe_draw", "comfyui_lookup",
+                "comfyui_job", "comfyui_validate_workflow",
+            } <= names
             assert (
                 plugin._draw_tool.shared["generation_queue"] is plugin._generation_queue
             )
@@ -339,7 +453,9 @@ async def run(root):
                 tool for tool in context.tools if tool.name == "comfyui_job"
             )
             assert job_tool.active and "task_id" in job_tool.parameters["properties"]
-            from image_cache import save_image
+            assert "include_ids" not in job_tool.parameters["properties"]
+            assert "fetch" in job_tool.parameters["properties"]["action"]["enum"]
+            save_image = reloaded["image_cache"].save_image
 
             pending = save_image(
                 plugin._output_dir, "pending.png", b"awaiting notification"

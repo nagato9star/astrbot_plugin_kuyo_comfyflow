@@ -22,7 +22,8 @@ from typing import Any
 import httpx
 
 from astrbot.api import logger
-from resource_catalog import infer_family
+from ..resources.catalog import infer_family
+from ..paths import PLUGIN_DIR
 
 # ZeroTier 虚拟局域网偶尔抽风（瞬时丢包/路径切换），这类连接级异常可安全重试：
 # - ConnectError/ConnectTimeout：TCP 连接未建立，请求肯定没发出去，重试无副作用
@@ -374,7 +375,7 @@ class ComfyUIClient:
     def _meta_debug(self, msg: str) -> None:
         """独立文件级日志：不依赖 astrbot logger，用于判定新代码是否真的在跑。"""
         try:
-            p = Path(__file__).parent / "metadata_debug.log"
+            p = PLUGIN_DIR / "metadata_debug.log"
             with open(p, "a", encoding="utf-8") as f:
                 f.write(time.strftime('%m-%d %H:%M:%S') + ' ' + msg + chr(10))
         except Exception:  # noqa: BLE001
@@ -405,7 +406,7 @@ class ComfyUIClient:
         self._meta_debug("submit_called")
         try:
             try:
-                from api_to_ui import build_extra_pnginfo  # AstrBot: 插件目录已在 sys.path（main.py 自举）
+                from ..workflows.ui_conversion import build_extra_pnginfo
             except ImportError:
                 from astrbot_plugin_kuyo_comfyflow.api_to_ui import build_extra_pnginfo  # 沙箱/包环境兜底
 
@@ -1442,7 +1443,7 @@ class ComfyUIClient:
         if not getattr(self, "events_enabled", False) or getattr(self, "_closed", False):
             return None
         if self._events is None:
-            from execution_events import ExecutionEvents
+            from .events import ExecutionEvents
             self._events = ExecutionEvents(self.base_url, self.request_timeout)
         return self._events
 
@@ -1566,8 +1567,7 @@ class ComfyUIClient:
                 for name in names:
                     raw = next((catalog[key] for key in self._lora_key_variants(name) if key in catalog), None)
                     if raw:
-                        metadata[name] = self.normalize_lora_metadata(raw)
-                        metadata[name]["trusted_trigger_words"] = list(metadata[name].get("trigger_words") or [])
+                        metadata[name] = raw
             embeddings = await self.get_embeddings()
             async with self._resource_lock:
                 current = self._load_cache()
@@ -1575,6 +1575,13 @@ class ComfyUIClient:
                     updated = copy.deepcopy(current)
                     merged = updated["resources"].setdefault("lora_meta", {})
                     for name, info in metadata.items():
+                        if not full:
+                            # 按最新缓存补缺字段，保留目录请求期间按需读出的可信元数据。
+                            previous = merged.get(name, {})
+                            trusted = self.normalize_lora_metadata(info).get("trigger_words") or []
+                            info = self.normalize_lora_metadata(info, fallback=previous)
+                            info["trusted_trigger_words"] = list(dict.fromkeys(
+                                list(previous.get("trusted_trigger_words") or []) + trusted))
                         merged[name] = {**merged.get(name, {}), **info}
                     if embeddings is not None:
                         updated["resources"]["embeddings"] = embeddings

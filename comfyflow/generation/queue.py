@@ -14,12 +14,13 @@ from typing import TYPE_CHECKING, Any
 from astrbot.api import logger
 from astrbot.api.event import MessageChain
 
-from comfy_client import execution_error_message
-from image_cache import save_image
+from ..clients.comfyui import execution_error_message
+from ..storage.images import save_image
+from .receipts import INTERNAL_ID_NOTICE, hide_task_ids, task_reference
 
 if TYPE_CHECKING:
     from astrbot.api.provider import LLMResponse
-    from completion_reply import CompletionEvent
+    from .reply import CompletionEvent
 
 ACTIVE = {"queued", "submitting", "running", "downloading"}
 TERMINAL = {"completed", "failed", "cancelled", "uncertain"}
@@ -230,6 +231,8 @@ class GenerationQueue:
                 "group_id": event.get_group_id()
                 if hasattr(event, "get_group_id")
                 else "",
+                "message_timestamp": getattr(getattr(event, "message_obj", None), "timestamp", None),
+                "source_request": str(getattr(event, "message_str", "") or ""),
                 "message_id": str(
                     getattr(getattr(event, "message_obj", None), "message_id", "")
                 ),
@@ -254,7 +257,7 @@ class GenerationQueue:
             self.events[identifier] = (event, self.turns.get(id(event)))
             self.shared.setdefault("last_job_ids", {})[umo] = identifier
             self.pending.put_nowait(identifier)
-        return "已加入生成队列，完成后自动发送图片并通知。可以继续聊天，无需轮询。"
+        return "已加入生成队列，完成后自动发送图片并通知。可以继续聊天，无需轮询。\n" + task_reference(job)
 
     def find(self, identifier: str, umo: str) -> dict | None:
         if not identifier:
@@ -280,20 +283,20 @@ class GenerationQueue:
             )
         return job if job and job["umo"] == umo else None
 
-    def describe(self, job: dict) -> str:
-        result = f"任务 {job['id']}：{LABELS.get(job['state'], job['state'])}"
-        if job.get("prompt_id"):
-            result += f"\nprompt_id={job['prompt_id']}"
+    def describe(self, job: dict, *, include_ids: bool = True, include_notice: bool = True) -> str:
+        result = f"任务：{LABELS.get(job['state'], job['state'])}"
+        if include_ids:
+            result += "\n" + task_reference(job, include_notice=include_notice)
         if job.get("paths"):
-            result += "\n图片路径：" + ", ".join(job["paths"])
+            result += f"\n输出图片：{len(job['paths'])} 张"
         for key in ("error", "note", "delivery_error", "history_error"):
             if job.get(key):
                 result += "\n" + job[key]
         if job["state"] in TERMINAL:
             result += "\n通知状态：" + job.get("delivery_state", "pending")
-        return result
+        return result if include_ids else hide_task_ids(result, [job.get("prompt_id", "")])
 
-    async def action(self, action: str, identifier: str, umo: str) -> str:
+    async def action(self, action: str, identifier: str, umo: str, *, include_ids: bool = False) -> str:
         if action == "queue":
             jobs = [
                 job
@@ -305,8 +308,8 @@ class GenerationQueue:
                 )
             ]
             return "本会话生成队列：\n" + (
-                "\n".join(self.describe(job) for job in jobs) or "暂无任务。"
-            )
+                "\n".join(self.describe(job, include_ids=include_ids, include_notice=False) for job in jobs) or "暂无任务。"
+            ) + ("\n" + INTERNAL_ID_NOTICE if include_ids and jobs else "")
         job = self.find(identifier, umo)
         if job is None:
             return "查询失败：当前会话没有该任务。"
@@ -320,7 +323,7 @@ class GenerationQueue:
                 elif job["state"] == "downloading":
                     return "图片已生成，正在回收结果；无需中断 GPU 任务。"
                 elif job["state"] not in ACTIVE:
-                    return self.describe(job)
+                    return self.describe(job, include_ids=include_ids)
                 else:
                     # Persist intent; worker interprets the backend interruption as cancellation.
                     job["cancel_requested"] = True
@@ -359,9 +362,9 @@ class GenerationQueue:
                 else:
                     await self._update(job, cancel_requested=False)
                     return "任务已离开 ComfyUI 队列，后台正在确认结果；未发出中断请求。"
-            return f"已请求取消任务 {job['id']}。"
+            return f"已请求取消任务 {job['id']}。" if include_ids else "已请求取消任务。"
         # Queue jobs never hold another LLM tool invocation open.
-        return self.describe(job)
+        return self.describe(job, include_ids=include_ids)
 
     async def _worker(self) -> None:
         while True:
@@ -514,18 +517,22 @@ class GenerationQueue:
         self, job: dict, summary: str, event: CompletionEvent
     ) -> LLMResponse | None:
         from astrbot.api.provider import ProviderRequest
+        from .hooks import begin_completion
         from astrbot.core.pipeline.context import call_event_hook
         from astrbot.core.star.star_handler import EventType
 
         if not self.notify_llm:
+            logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：配置关闭。")
             return None
         manager = self.context.conversation_manager
         cid = job.get("cid")
         if not cid or await manager.get_curr_conversation_id(job["umo"]) != cid:
             # A new/deleted conversation must not inherit an old job's history.
+            logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：原对话已切换或不存在。")
             return None
         conversation = await manager.get_conversation(job["umo"], cid)
         if conversation is None:
+            logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：原对话已删除。")
             return None
         config = event.config
         settings = config.get("provider_settings") or {}
@@ -537,8 +544,8 @@ class GenerationQueue:
             provider_settings=settings,
         )
         system = (persona or {}).get("prompt", "")
-        system += "\n收到插件后台任务结果，请结合原对话和人格自然、简短地回应用户。内部任务编号仅供查询或排错，日常回复无需提及；用户明确询问编号时才提供。图片发送状态以任务事件为准；无需再次生图或发送图片。"
-        prompt = "[ComfyUI 后台任务事件]\n" + summary
+        # 临时通知指令放在末尾事件消息，保留人格与历史消息的稳定前缀。
+        prompt = "[ComfyUI 后台任务事件]\n" + summary + "\n请结合原请求自然、简短地回应；图片发送状态以本事件为准，无需再次生图或发送图片。"
         request = ProviderRequest(
             prompt=prompt,
             session_id=job["umo"],
@@ -547,17 +554,27 @@ class GenerationQueue:
             conversation=conversation,
         )
         event.set_extra("provider_request", request)
+        waiting = getattr(EventType, "OnWaitingLLMRequestEvent", None)
+        if waiting is not None and await call_event_hook(event, waiting):
+            logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：等待请求 hook 拦截。")
+            return None
         if await call_event_hook(event, EventType.OnLLMRequestEvent, request):
+            logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：请求 hook 拦截。")
+            return None
+        if await begin_completion(self.context, event, request):
+            logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：Agent 开始 hook 拦截。")
             return None
         options = {}
         if request.model:
             options["model"] = request.model
         if request.extra_user_content_parts:
             options["extra_user_content_parts"] = request.extra_user_content_parts
+        provider_id = await self.context.get_current_chat_provider_id(job["umo"])
+        logger.info(f"[ComfyUIDirect] 任务 {job['id']} 触发完成通知 LLM：prompt_id={job.get('prompt_id', '')} "
+                    f"会话={job['umo']} 对话={cid} provider={provider_id} 图片={job.get('images_sent', 0)} 张。")
+        started = time.monotonic()
         response = await self.context.llm_generate(
-            chat_provider_id=await self.context.get_current_chat_provider_id(
-                job["umo"]
-            ),
+            chat_provider_id=provider_id,
             prompt=request.prompt,
             image_urls=request.image_urls,
             audio_urls=request.audio_urls,
@@ -566,14 +583,18 @@ class GenerationQueue:
             **options,
         )
         text = str(response.completion_text or "").strip()
+        logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 返回：耗时={time.monotonic() - started:.2f}s "
+                    f"回复={len(text)} 字符。")
         if not text:
             raise RuntimeError("LLM 未返回通知文本。")
         return response
 
     async def _deliver(self, job: dict) -> None:
+        event = None
         try:
             from astrbot.api.provider import LLMResponse
-            from completion_reply import CompletionEvent, send_completion_reply
+            from .reply import CompletionEvent, send_completion_reply
+            from .transport import capture_completion_sends
 
             original = self.events.get(job["id"])
             if original and original[1]:
@@ -587,6 +608,8 @@ class GenerationQueue:
                     self.shared.setdefault("last_image_paths", {})[job["umo"]] = job[
                         "paths"
                     ][0]
+                logger.info(f"[ComfyUIDirect] 任务 {job['id']} 图片发送结束：{job['images_sent']}/{len(job['paths'])} 张，"
+                            f"生成状态={job['state']}。")
                 notice = f"生图任务{LABELS[job['state']]}。"
                 if job["paths"]:
                     notice += f"图片已发送，共 {len(job['paths'])} 张。"
@@ -594,32 +617,38 @@ class GenerationQueue:
                     notice += "\n" + job["error"]
                 if job.get("note"):
                     notice += "\n" + job["note"]
-                summary = notice
-                if job["paths"]:
-                    summary += "\n本地路径：" + ", ".join(job["paths"])
+                notice = hide_task_ids(notice, [job.get("prompt_id", "")])
+                summary = notice + "\n" + task_reference(job)
                 event = CompletionEvent(
                     job,
                     summary,
                     self.context.get_config(umo=job["umo"]),
                     lambda chain: self._send(job, chain),
+                    original=original[0] if original else None,
                 )
-                try:
-                    response = await asyncio.wait_for(
-                        self._reply(job, summary, event), self.llm_timeout
+                event.set_extra("comfyui_backend_ids", [item.get("prompt_id", "")
+                                                       for item in self.jobs.values() if item["umo"] == job["umo"]])
+                with capture_completion_sends(self.context, event):
+                    try:
+                        response = await asyncio.wait_for(
+                            self._reply(job, summary, event), self.llm_timeout
+                        )
+                    except Exception as error:
+                        detail = str(error) or type(error).__name__
+                        logger.warning(
+                            f"[ComfyUIDirect] 任务 {job['id']} LLM 通知失败，使用任务结果: {detail}"
+                        )
+                        response = None
+                        job["llm_error"] = detail
+                    from_llm = response is not None
+                    if response is None and not event.is_stopped():
+                        response = LLMResponse(role="assistant", completion_text=notice)
+                    text = await send_completion_reply(
+                        self.context, event, response, from_llm=from_llm
                     )
-                except Exception as error:
-                    detail = str(error) or type(error).__name__
-                    logger.warning(
-                        f"[ComfyUIDirect] 任务 {job['id']} LLM 通知失败，使用任务结果: {detail}"
-                    )
-                    response = None
-                    job["llm_error"] = detail
-                from_llm = response is not None
-                if response is None and not event.is_stopped():
-                    response = LLMResponse(role="assistant", completion_text=notice)
-                text = await send_completion_reply(
-                    self.context, event, response, from_llm=from_llm
-                )
+                outcome = "文本已发送" if text else "回复已被插件处理或清空"
+                logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知处理结束：{outcome}，"
+                            f"来源={'LLM' if from_llm else '任务结果'}，送达文本={len(text)} 字符。")
                 if text and job.get("cid"):
                     job["history_pair"] = [
                         {
@@ -647,6 +676,8 @@ class GenerationQueue:
             logger.error(f"[ComfyUIDirect] 任务 {job['id']} 通知失败: {error}")
             await self._update(job, delivery_state="failed", delivery_error=str(error))
         finally:
+            if event is not None:
+                self.end_turn(event)
             self.delivering.discard(job["id"])
             self.events.pop(job["id"], None)
 

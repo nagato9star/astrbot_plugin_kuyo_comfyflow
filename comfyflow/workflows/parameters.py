@@ -1,6 +1,6 @@
 """Shared preparation rules for Bot and Workflow Studio generation."""
 
-from slot_mapping import collect_trigger_words
+from .slots import collect_trigger_words
 
 
 def fill_trigger_words(values: dict, resources: dict, enabled: bool) -> dict:

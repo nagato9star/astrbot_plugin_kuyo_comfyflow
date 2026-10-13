@@ -11,11 +11,11 @@ import time
 from pathlib import Path
 
 import smoke_test  # noqa: F401 - offline AstrBot fixtures
-from comfy_client import ComfyUIClient
-from image_cache import manage_cache, save_image
-from model_families import WorkflowProfileStore
-from slot_mapping import apply_slots, detect_slots
-from tools import ComfyuiLookupTool
+from comfyflow.clients.comfyui import ComfyUIClient
+from comfyflow.storage.images import manage_cache, save_image
+from comfyflow.workflows.registry import WorkflowProfileStore
+from comfyflow.workflows.slots import apply_slots, detect_slots
+from comfyflow.tools import ComfyuiLookupTool
 
 PLUGIN = Path(__file__).resolve().parents[1]
 
@@ -45,7 +45,14 @@ async def resource_retention(root: Path) -> None:
             return self.definitions
 
         async def get_lora_manager_catalog(self):
-            return {}
+            if getattr(self, "catalog_gate", None) is not None:
+                self.catalog_started.set()
+                await self.catalog_gate.wait()
+            return {"style.safetensors": {"base_model": "Anima"}}
+
+        async def _fetch_lora_trigger_words(self, names, **kwargs):
+            return {"style.safetensors": {"trigger_words": ["known", "selected_now"],
+                                         "trusted_trigger_words": ["known", "selected_now"]}}
 
         async def get_embeddings(self):
             return None
@@ -65,7 +72,7 @@ async def resource_retention(root: Path) -> None:
             "clip_name": ["encoder.safetensors"],
             "vae_name": ["vae.safetensors"],
             "embeddings": ["known_embedding"],
-            "lora_meta": {"style.safetensors": {"trusted_trigger_words": ["known"]}},
+            "lora_meta": {"style.safetensors": {"trigger_words": ["known"], "trusted_trigger_words": ["known"]}},
             "model_meta": {"base.safetensors": {"family": "demo"}},
         },
     }
@@ -93,16 +100,28 @@ async def resource_retention(root: Path) -> None:
         }
         await client.generation_resources()
         assert client._load_cache()["lora_metadata_v4"] is True
+        # 到期继续更新轻量目录与 Embedding，不重新下载已有完整元数据。
+        await client._enrich_catalog()
+        assert client._load_cache()["resources"]["lora_meta"]["style.safetensors"]["trigger_words"] == ["known"]
+        assert client._load_cache()["resources"]["lora_meta"]["style.safetensors"]["trusted_trigger_words"] == ["known"]
+        before_selection = copy.deepcopy(client._load_cache())
+        client.catalog_started, client.catalog_gate = asyncio.Event(), asyncio.Event()
+        light = asyncio.create_task(client._enrich_catalog())
+        await client.catalog_started.wait()
+        await client.selected_lora_metadata({"lora_meta": {}}, ["style.safetensors"], require_trusted=True)
+        client.catalog_gate.set()
+        await light
+        assert client._load_cache()["resources"]["lora_meta"]["style.safetensors"]["trusted_trigger_words"] == ["known", "selected_now"]
+        client.catalog_gate = None
+        client._save_cache(before_selection)
         await client.generation_resources(force_refresh=True)
         assert client._load_cache()["lora_metadata_v4"] is False
-        assert (
-            client._load_cache()["resources"]["lora_meta"]
-            == original["resources"]["lora_meta"]
-        )
+        assert client._load_cache()["resources"]["lora_meta"]["style.safetensors"]["trigger_words"] == ["known"]
         refreshed["lora_name"].clear()
         assert client._load_cache()["resources"]["lora_name"] == ["style.safetensors"]
         await client._enrich_catalog()
         assert client._load_cache()["resources"]["embeddings"] == ["known_embedding"]
+        assert client._load_cache()["resources"]["lora_meta"]["style.safetensors"]["trusted_trigger_words"] == ["known"]
         client.cache_file.write_text("{interrupted external write", encoding="utf-8")
         assert client._load_cache()["resources"]["unet_name"] == ["base.safetensors"]
         client.definitions = {

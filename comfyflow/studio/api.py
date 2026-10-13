@@ -12,18 +12,18 @@ from typing import Any
 
 from astrbot.api import logger
 
-from comfy_client import (
+from ..clients.comfyui import (
     ComfyUIClient,
     execution_error_message,
     image_media_type,
 )
-from image_cache import save_image
-from resource_catalog import selection_error
-from model_families import EditWorkflowRegistry, ModelFamilyRegistry, WorkflowProfileStore
-from config_options import refresh_config_options
-from recipe_store import RecipeStore, materialize_values, recipe_template
-from generation_support import fill_trigger_words
-from slot_mapping import (
+from ..storage.images import save_image
+from ..resources.catalog import selection_error
+from ..workflows.registry import EditWorkflowRegistry, ModelFamilyRegistry, WorkflowProfileStore
+from .config import refresh_config_options
+from ..storage.recipes import RecipeStore, materialize_values, recipe_template
+from ..workflows.parameters import fill_trigger_words
+from ..workflows.slots import (
     SLOT_BASIC,
     SLOT_HELP,
     SLOT_ROLES,
@@ -40,8 +40,8 @@ from slot_mapping import (
     source_image_slots,
     ANIMA_DROP_NODES,
 )
-from workflow_builder import WorkflowBuilder
-from workflow_graph import validate_api_workflow, validate_ui_snapshot
+from ..workflows.builder import WorkflowBuilder
+from ..workflows.graph import validate_api_workflow, validate_ui_snapshot
 
 PLUGIN_NAME = "astrbot_plugin_kuyo_comfyflow"
 

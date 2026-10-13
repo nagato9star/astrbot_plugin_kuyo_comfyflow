@@ -14,9 +14,9 @@ from typing import Any
 
 from astrbot.api import logger
 
-from recipe_store import model_family, recipe_template
-from resource_catalog import canonical_family
-from slot_mapping import (
+from ..storage.recipes import model_family, recipe_template
+from ..resources.catalog import canonical_family
+from .slots import (
     ANIMA_DROP_NODES,
     detect_slots,
     looks_like_anima,

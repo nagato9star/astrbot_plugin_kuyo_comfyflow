@@ -18,6 +18,12 @@ from astrbot.api.event import AstrMessageEvent
 # Queue scheduling remains testable without the SDK; the SDK script exercises
 # the real completion event, hook registry, result decoration and delivery.
 if not hasattr(AstrMessageEvent, "make_result"):
+    from contextlib import nullcontext
+
+    # 隔离测试只验证调度；直接发送捕获由真实 SDK 集成测试覆盖。
+    sys.modules['comfyflow.generation.transport'] = types.SimpleNamespace(
+        capture_completion_sends=lambda context, event: nullcontext()
+    )
 
     class Entity(types.SimpleNamespace):
         def __init__(self, **kwargs):
@@ -32,7 +38,7 @@ if not hasattr(AstrMessageEvent, "make_result"):
             )
 
     class CompletionEvent:
-        def __init__(self, job, summary, config, send):
+        def __init__(self, job, summary, config, send, original=None):
             self.send = send
             self.config = config
 
@@ -58,31 +64,29 @@ if not hasattr(AstrMessageEvent, "make_result"):
     sys.modules["astrbot.core.star.star_handler"] = types.SimpleNamespace(
         EventType=types.SimpleNamespace(OnLLMRequestEvent="request")
     )
-    sys.modules["completion_reply"] = types.SimpleNamespace(
+    sys.modules['comfyflow.generation.reply'] = types.SimpleNamespace(
         CompletionEvent=CompletionEvent, send_completion_reply=send_completion_reply
     )
 
 from astrbot.api.provider import LLMResponse  # noqa: E402
-import generation_queue
-from comfy_client import ComfyUIClient
-from generation_queue import GenerationQueue
-from model_families import (
+from comfyflow.generation import queue as generation_queue
+from comfyflow.clients.comfyui import ComfyUIClient
+from comfyflow.generation.queue import GenerationQueue
+from comfyflow.workflows.registry import (
     EditWorkflowRegistry,
     ModelFamilyRegistry,
     WorkflowProfileStore,
 )
-from recipe_store import RecipeStore
-from slot_mapping import detect_slots
-from tools import (
+from comfyflow.storage.recipes import RecipeStore
+from comfyflow.workflows.slots import detect_slots
+from comfyflow.tools import (
     ComfyuiDrawTool,
     ComfyuiEditTool,
-    ComfyuiGenerateTool,
     ComfyuiJobTool,
     ComfyuiRecipeDrawTool,
-    ComfyuiRunWorkflowTool,
     ComfyuiValidateWorkflowTool,
 )
-from workflow_builder import WorkflowBuilder
+from comfyflow.workflows.builder import WorkflowBuilder
 
 PLUGIN = Path(__file__).resolve().parents[1]
 PNG = b"\x89PNG\r\n\x1a\nqueue-result"
@@ -129,7 +133,13 @@ class Conversations:
         self.history[cid].extend([user, assistant])
 
 
-class Context:
+if hasattr(AstrMessageEvent, "make_result"):
+    from astrbot.api.star import Context as BaseContext
+else:
+    BaseContext = object
+
+
+class Context(BaseContext):
     def __init__(self):
         self.conversation_manager = Conversations()
         self.persona_manager = self
@@ -291,7 +301,9 @@ async def async_receipt_and_delivery(root):
         origin,
         history={"prompt": "cat", "values": {"seed": 42}},
     )
-    assert "已加入生成队列" in receipt and "C000001" not in receipt
+    assert "已加入生成队列" in receipt and "task_id=C000001" in receipt
+    assert "编号仅为内部标记，不用向用户声明或复述。" in receipt
+    assert "生成指令：cat" in receipt
     assert shared["last_job_ids"][origin.unified_msg_origin] == "C000001"
     assert not context.sent and not context.requests
     await until(lambda: len(client.submissions) == 1)
@@ -322,14 +334,16 @@ async def async_receipt_and_delivery(root):
     completion_request = next(
         request for request in context.requests if "已完成" in request["prompt"]
     )
-    assert completion_request["system_prompt"].startswith("friendly persona")
+    assert completion_request["system_prompt"] == "friendly persona"
     assert any(
         message["content"] == receipt for message in completion_request["contexts"]
     )
     assert completion_request["chat_provider_id"] == "original-provider"
     assert "已完成" in completion_request["prompt"]
-    assert "C000001" not in completion_request["prompt"]
-    assert "用户明确询问编号时才提供" in completion_request["system_prompt"]
+    assert "task_id=C000001" in completion_request["prompt"]
+    assert "prompt_id=pid-1" in completion_request["prompt"]
+    assert "生成指令：cat" in completion_request["prompt"]
+    assert "编号仅为内部标记，不用向用户声明或复述。" in completion_request["prompt"]
     history = queue.store.history_get("pid-1")
     assert history["values"]["seed"] == 42 and len(history["local_paths"]) == 2
     assert (
@@ -503,27 +517,17 @@ async def entrypoints(root):
         profiles=profiles,
     )
     recipe = ComfyuiRecipeDrawTool(draw_tool=draw, store=queue.store, families=families)
-    legacy = ComfyuiGenerateTool(
-        client=client,
-        builder=builder,
-        store=queue.store,
-        output_dir=root / "output",
-        shared=shared,
-        families=families,
-        profiles=profiles,
-    )
-    raw = ComfyuiRunWorkflowTool(
-        client=client, output_dir=root / "output", shared=shared
-    )
     assert "已加入生成队列" in await draw.call(
         wrapped, model_family="demo", prompt="cat", save_as="new recipe"
     )
     assert "已加入生成队列" in await recipe.call(wrapped, prompt="dog", recipe="saved")
-    assert "已加入生成队列" in await legacy.call(
-        wrapped, prompt="bird", workflow="mini"
-    )
-    assert "已加入生成队列" in await raw.call(
-        wrapped, workflow=json.dumps(workflow), wait=True
+    builder.save_template("legacy-mini", workflow)
+    queue.store.save({
+        "name": "legacy saved", "workflow": "legacy-mini",
+        "slots": detect_slots(workflow), "defaults": {"steps": 9},
+    })
+    assert "已加入生成队列" in await recipe.call(
+        wrapped, prompt="legacy recipe", recipe="legacy saved"
     )
     edit_workflow = {
         "1": {"class_type": "LoadImage", "inputs": {"image": "old.png"}},
@@ -564,27 +568,37 @@ async def entrypoints(root):
     assert "已加入生成队列" in receipt, receipt
     assert client.uploads and not context.sent
     job_tool = ComfyuiJobTool(client=client, shared=shared)
-    assert "C000005" in await job_tool.call(wrapped, action="status")
-    assert "C000002" in await job_tool.call(wrapped, action="status", task_id="C000002")
+    assert "C000004" in await job_tool.call(wrapped, action="status", include_ids=True)
+    assert "C000002" in await job_tool.call(wrapped, action="status", task_id="C000002", include_ids=True)
+    assert queue.find("", origin.unified_msg_origin)["id"] == "C000004"
+    assert queue.find("C000002", origin.unified_msg_origin)["id"] == "C000002"
     client.finished.set()
     await until(
         lambda: all(job["delivery_state"] == "sent" for job in queue.jobs.values())
     )
-    assert len(client.submissions) == 5
+    assert len(client.submissions) == 4
+    assert len(context.requests) == 4
+    for job in queue.jobs.values():
+        request = next(item for item in context.requests if f"task_id={job['id']}" in item["prompt"])
+        assert f"prompt_id={job['prompt_id']}" in request["prompt"]
+        assert "生成指令：" + job["history"]["prompt"] in request["prompt"]
     assert all(
         workflow["6"]["inputs"]["filename_prefix"]
         == item["6"]["inputs"]["filename_prefix"]
-        for item in client.submissions[:4]
+        for item in client.submissions[:3]
     )
-    assert client.submissions[4]["3"]["inputs"]["filename_prefix"] == "edit"
+    assert client.submissions[3]["3"]["inputs"]["filename_prefix"] == "edit"
     assert queue.store.get("new recipe") is not None
     assert client.submissions[1]["2"]["inputs"]["text"] == "dog"
-    assert client.submissions[4]["1"]["inputs"]["image"] == "uploaded.png"
+    assert client.submissions[3]["1"]["inputs"]["image"] == "uploaded.png"
+    assert client.submissions[2]["2"]["inputs"]["text"] == "legacy recipe"
+    assert any(row["workflow"] == "legacy-mini" for row in queue.store.list_history())
     assert any(row["entry"] == "edit" for row in queue.store.list_history())
     await queue.close()
 
 
 async def workflow_loading(root):
+    root.mkdir(parents=True, exist_ok=True)
     workflow = {"1": {"class_type": "Demo", "inputs": {"text": "x" * 4096}}}
     raw = json.dumps(workflow)
 
@@ -592,39 +606,31 @@ async def workflow_loading(root):
         async def get_object_info(self, force_refresh=False):
             return {"Demo": {"input": {"required": {"text": ["STRING"]}}}}
 
-    queue, _, client, shared = make_queue(root / "queue", client=ValidationClient())
-    wrapped = types.SimpleNamespace(context=types.SimpleNamespace(event=event()))
-    run = ComfyuiRunWorkflowTool(client=client, shared=shared)
-    validate = ComfyuiValidateWorkflowTool(client=client)
+    validate = ComfyuiValidateWorkflowTool(client=ValidationClient())
     with patch.object(
         Path, "is_file", side_effect=OSError(errno.ENAMETOOLONG, "File name too long")
     ) as probe:
-        assert ComfyuiRunWorkflowTool._load_wf("\n " + raw + " \n") == workflow
-        assert "已加入生成队列" in await run.call(wrapped, workflow=raw)
-        assert queue.jobs["C000001"]["workflow"] == workflow
-        assert "校验结果: valid" in await validate.call(wrapped, workflow=raw)
+        assert ComfyuiValidateWorkflowTool._load_wf("\n " + raw + " \n") == workflow
+        assert "校验结果: valid" in await validate.call(None, workflow=raw)
         probe.assert_not_called()
-        error = await run.call(wrapped, workflow="x" * 4096)
-        assert error.startswith("运行失败：读取工作流文件失败"), error
-        error = await validate.call(wrapped, workflow="x" * 4096)
+        error = await validate.call(None, workflow="x" * 4096)
         assert error.startswith("校验失败：读取工作流文件失败"), error
-    await queue.close()
 
     path = root / "workflow.json"
     path.write_text(raw, encoding="utf-8")
-    assert ComfyuiRunWorkflowTool._load_wf(str(path)) == workflow
-    assert ComfyuiRunWorkflowTool._load_wf("  ") is None
+    assert ComfyuiValidateWorkflowTool._load_wf(str(path)) == workflow
+    assert ComfyuiValidateWorkflowTool._load_wf("  ") is None
     for payload in ("[]", "null", "123", "{malformed"):
         path.write_text(payload, encoding="utf-8")
         for value in (payload, str(path)):
             try:
-                ComfyuiRunWorkflowTool._load_wf(value)
+                ComfyuiValidateWorkflowTool._load_wf(value)
             except ValueError:
                 pass
             else:
                 raise AssertionError(f"invalid workflow accepted: {payload}")
     print(
-        "inline/file workflow parsing / Linux ENAMETOOLONG / run and validation tool regressions OK"
+        "inline/file workflow parsing / Linux ENAMETOOLONG / validation tool regressions OK"
     )
 
 

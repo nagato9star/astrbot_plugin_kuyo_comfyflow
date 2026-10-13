@@ -7,81 +7,44 @@
 - 内置 anima-v3 工作流模板（五段式提示词：画师串/质量/主提示词/lora触发词 + 反向）
 - 模型/LoRA/CLIP 清单自动同步缓存，离线回退
 - 工具支持可选模型、LoRA、KSampler 参数（steps/cfg/sampler_name/scheduler/denoise/seed）
-- 队列查询 / 生成中断（comfyui_queue / comfyui_interrupt）
+- 会话任务查询、取消与输出补下载（comfyui_job）
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-# AstrBot 按文件路径导入 main.py，不会把插件目录加入 sys.path。
-# 先自举：把本目录插到 sys.path 最前，保证兄弟模块（comfy_client 等）可顶层导入。
-_PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
-if _PLUGIN_DIR not in sys.path:
-    sys.path.insert(0, _PLUGIN_DIR)
+from astrbot.api import AstrBotConfig, logger
+from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.star import Context, Star, register
+from astrbot.core.star.star_tools import StarTools
 
-from astrbot.api import AstrBotConfig, logger  # noqa: E402
-from astrbot.api.event import AstrMessageEvent, filter  # noqa: E402
-from astrbot.api.star import Context, Star, register  # noqa: E402
-from astrbot.core.star.star_tools import StarTools  # noqa: E402
+# 只重载当前插件的内部包，不清理其他插件的通用模块名。
+_MODULE_PREFIX = f"{__package__}.comfyflow"
+for _name in tuple(sys.modules):
+    if _name == _MODULE_PREFIX or _name.startswith(_MODULE_PREFIX + "."):
+        sys.modules.pop(_name, None)
 
-# 热重载兼容：AstrBot 重载插件时只清 data.plugins.<root>.* 前缀的模块，
-# 顶层导入的兄弟模块（external_search/tools 等）会残留旧缓存，
-# 导致改代码后热重载仍在跑旧逻辑。这里在导入前主动踢掉它们。
-import sys as _sys  # noqa: E402
-
-for _pkg_prefix in ("", "astrbot_plugin_comfyui_direct.", "astrbot_plugin_kuyo_comfyflow."):
-    for _m in (
-        "external_search",
-        "tools",
-        "comfy_client",
-        "workflow_builder",
-        "webapi",
-        "slot_mapping",
-        "recipe_store",
-        "model_families",
-        "image_cache",
-        "resource_catalog",
-        "config_options",
-        "character_tags",
-        "generation_support",
-        "generation_queue",
-        "completion_reply",
-        "execution_events",
-        "animadex",
-        "api_to_ui",
-    ):
-        _sys.modules.pop(_pkg_prefix + _m, None)
-
-from character_tags import CharacterTagLookup  # noqa: E402
-from animadex import AnimaDexClient  # noqa: E402
-from comfy_client import ComfyUIClient  # noqa: E402
-from config_options import refresh_config_options  # noqa: E402
-from generation_queue import GenerationQueue  # noqa: E402
-from external_search import CivitaiClient, DanbooruClient, GelbooruClient  # noqa: E402
-from tools import (  # noqa: E402
-    ComfyuiAnimadexTool,
-    ComfyuiBooruTool,
+from .comfyflow.resources.characters import CharacterTagLookup  # noqa: E402
+from .comfyflow.clients.animadex import AnimaDexClient  # noqa: E402
+from .comfyflow.clients.comfyui import ComfyUIClient  # noqa: E402
+from .comfyflow.studio.config import refresh_config_options  # noqa: E402
+from .comfyflow.generation.queue import GenerationQueue  # noqa: E402
+from .comfyflow.generation.receipts import clean_task_result  # noqa: E402
+from .comfyflow.clients.external import CivitaiClient, DanbooruClient, GelbooruClient  # noqa: E402
+from .comfyflow.tools import (  # noqa: E402
     ComfyuiCivitaiSearchTool,
-    ComfyuiFetchOutputsTool,
     ComfyuiFreeMemoryTool,
-    ComfyuiGenerateTool,
-    ComfyuiInterruptTool,
     ComfyuiJobTool,
-    ComfyuiListModelsTool,
     ComfyuiModelInfoTool,
-    ComfyuiModelsSearchTool,
     ComfyuiNodesTool,
-    ComfyuiQueueTool,
     ComfyuiRecipeTool,
     ComfyuiRecipeDrawTool,
-    ComfyuiRunWorkflowTool,
     ComfyuiSystemStatsTool,
     ComfyuiUploadFileTool,
     ComfyuiValidateWorkflowTool,
@@ -89,12 +52,12 @@ from tools import (  # noqa: E402
     ComfyuiEditTool,
     ComfyuiLookupTool,
 )
-from workflow_builder import WorkflowBuilder  # noqa: E402
-from model_families import EditWorkflowRegistry, ModelFamilyRegistry, WorkflowProfileStore  # noqa: E402
-from recipe_store import RecipeStore  # noqa: E402
+from .comfyflow.workflows.builder import WorkflowBuilder  # noqa: E402
+from .comfyflow.workflows.registry import EditWorkflowRegistry, ModelFamilyRegistry, WorkflowProfileStore  # noqa: E402
+from .comfyflow.storage.recipes import RecipeStore  # noqa: E402
 
 
-from image_cache import manage_cache  # noqa: E402
+from .comfyflow.storage.images import manage_cache  # noqa: E402
 
 # 与 _conf_schema.json 一致的默认值（配置缺失时的兜底）
 DEFAULT_HOST = "127.0.0.1"
@@ -104,11 +67,9 @@ DEFAULT_CACHE_TTL = 600
 DEFAULT_WORKFLOW = "anima-v3"
 
 BASIC_LLM_TOOLS = {"comfyui_draw", "comfyui_edit", "comfyui_recipe_draw", "comfyui_lookup", "comfyui_job"}
-# 这些工具可能读取任意本地文件、执行未经映射的自定义节点或影响其他任务，
+# 这些工具会读取本地图片、卸载模型或清理执行缓存，
 # 默认不交给模型；需要时由管理员显式打开配置。
 LLM_UNSAFE_TOOLS = {
-    "comfyui_generate",
-    "comfyui_run_workflow",
     "comfyui_upload_file",
     "comfyui_free_memory",
 }
@@ -349,35 +310,14 @@ class ComfyUIDirectPlugin(Star):
             self._edit_tool,
             self._recipe_draw_tool,
             self._lookup_tool,
-            ComfyuiListModelsTool(client=self._client),
-            ComfyuiGenerateTool(
-                client=self._client,
-                builder=self._builder,
-                output_dir=self._output_dir,
-                shared=shared,
-                defaults=defaults,
-                store=self._store,
-                families=self._families,
-                profiles=self._profiles,
-                auto_trigger_words=bool(cfg.get("auto_lora_trigger_words", False)),
-            ),
-            ComfyuiInterruptTool(client=self._client, shared=shared),
-            ComfyuiQueueTool(client=self._client),
-            ComfyuiBooruTool(danbooru=self._danbooru, gelbooru=self._gelbooru),
             ComfyuiCivitaiSearchTool(client=self._civitai),
-            ComfyuiAnimadexTool(client=self._animadex),
             ComfyuiModelInfoTool(client=self._client, civitai=self._civitai),
-            ComfyuiRunWorkflowTool(
-                client=self._client, output_dir=self._output_dir, shared=shared
-            ),
-            ComfyuiJobTool(client=self._client, shared=shared),
-            ComfyuiFetchOutputsTool(client=self._client, output_dir=self._output_dir),
+            ComfyuiJobTool(client=self._client, shared=shared, output_dir=self._output_dir),
             ComfyuiSystemStatsTool(client=self._client),
             ComfyuiFreeMemoryTool(client=self._client),
             ComfyuiNodesTool(client=self._client),
             ComfyuiValidateWorkflowTool(client=self._client),
             ComfyuiUploadFileTool(client=self._client),
-            ComfyuiModelsSearchTool(client=self._client),
             recipe_tool,
         ]
         for t in tools:
@@ -390,7 +330,7 @@ class ComfyUIDirectPlugin(Star):
             t.handler_module_path = self.__class__.__module__
 
         try:
-            from webapi import register_web_apis
+            from .comfyflow.studio.api import register_web_apis
 
             register_web_apis(
                 self.context,
@@ -494,6 +434,11 @@ class ComfyUIDirectPlugin(Star):
         await self._generation_queue.start()
         if self._cache_auto_clean and self._cache_task is None:
             self._cache_task = asyncio.create_task(self._cache_cleanup_loop())
+
+    @filter.on_decorating_result(priority=100)
+    async def generation_reply_cleanup(self, event: AstrMessageEvent) -> None:
+        """日常 ComfyUI 工具回复不播报内部任务编号。"""
+        clean_task_result(event)
 
     @filter.on_waiting_llm_request()
     async def generation_turn_begin(self, event: AstrMessageEvent) -> None:
