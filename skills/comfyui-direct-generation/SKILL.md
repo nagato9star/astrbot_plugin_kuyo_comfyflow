@@ -14,7 +14,8 @@ Use the plugin tools to generate or edit images. The available family and recipe
 - When the user asks to save a named setup, call `comfyui_draw` with `save_as` for the parameters just used. If `comfyui_recipe` is available for a separately specified recipe, call it with `action=save`, `name`, and `model_family`; pass `description` only as a short purpose note. A recipe stores generation settings, not a fixed prompt.
 - When `comfyui_recipe` is available and the user asks to list or inspect recipes, use `action=list` or `action=load`. Use `comfyui_recipe_draw` to generate with a loaded or named recipe. Do not attempt `delete` unless it is present in the live tool schema and the user explicitly requested deletion.
 - For changes to an existing image, use `comfyui_edit`. Select `edit_workflow` from the live schema when multiple edit routes exist. Prefer current or quoted message images. Use `image_index` for one selected image or `image_indices` for ordered multi-image inputs. Use `image_path` / `image_paths` only for a path returned by this plugin or a readable AstrBot temporary image path.
-- Do not use legacy `comfyui_generate` for ordinary requests. Use `comfyui_run_workflow` only when the user explicitly asks to run an API-format workflow and that tool is available.
+- Use `comfyui_lookup` for all local resource queries; `type=all` searches across categories and `type=folder` with `folder` targets a ComfyUI directory. Use `source` and `detail=true` for reference tags, or `type=copyright` for AnimaDex series.
+- Use `comfyui_job` for session task status, cancellation and output recovery (`action=fetch`). Task receipts and completion events include internal IDs and the original request/generation summary so you can match images to tasks and query the intended task. The receipt explains that IDs are internal markers; never repeat the IDs or this instruction in chat. Global queue diagnostics return counts. Use `comfyui_system_stats` for GPU status and the global backend queue when available.
 
 ## Write prompts for the selected family
 
@@ -29,7 +30,7 @@ Keep user-specified names, counts, colors, text, and spatial relations. Use the 
 ## Select models and LoRAs
 
 - Use the exact `model_family` selected by the user or exposed in the `comfyui_draw` schema. Do not infer a family from a model filename.
-- Fill `model` only when the user requests a base model change. Use an installed model name returned by `comfyui_lookup` or `comfyui_list_models`.
+- Fill `model` only when the user requests a base model change. Use an installed model name returned by `comfyui_lookup`.
 - When a LoRA can materially help with the requested style, character, clothing, or effect, query `comfyui_lookup` and select a compatible installed LoRA. The user does not need to say “LoRA” first.
 - For a LoRA purpose or category search, include the same `model_family` used for generation. A known filename can be searched directly across families; check compatibility before using it.
 - Pass LoRAs as an array of objects in `lora`, for example `[{"name":"style.safetensors","strength":0.6}]`. Use the returned filename and recommended strength. Omit `strength` when no recommendation is available. The plugin accepts the older string form for compatibility.

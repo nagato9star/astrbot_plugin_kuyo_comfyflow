@@ -34,9 +34,25 @@ Kuyo ComfyFlow 是一款基于 [AstrBot](https://github.com/AstrBotDevs/AstrBot)
 | **Workflow Studio** | 分别管理工作流 JSON、家族绑定与节点映射，以及静态配方和试画 |
 | **查一下再画** | 角色、画师、底模、LoRA 不确定时先查短列表；LoRA 支持 style / character 等分类 |
 
+## 开发目录
+
+根目录的 `main.py` 是 AstrBot 插件入口，内部实现统一放在 `comfyflow/`：
+
+| 目录 | 职责 |
+|:---|:---|
+| `clients/` | ComfyUI HTTP/WebSocket、Civitai、Booru 和 AnimaDex 客户端 |
+| `workflows/` | 模板构建、节点映射、图校验、模型家族及编辑路由 |
+| `resources/` | 本地资源分类、角色规范词和参考来源查询 |
+| `storage/` | 图片缓存与配方、生成历史存储 |
+| `generation/` | 后台队列、完成回复生命周期、发送隔离及输出恢复 |
+| `studio/` | 工作台 API 与配置选项刷新 |
+| `tools/` | 生图、编辑、配方、查询、任务和诊断工具；共用参数解析单独维护 |
+
+模块使用包内相对导入；热重载只更新当前插件的内部包。工作流、图片、配方与模型缓存继续使用原插件数据目录，安装目录由 `comfyflow/paths.py` 定位。开发测试脚本仍位于 `scripts/`，工作台静态资源仍位于 `pages/workflow-editor/`。
+
 ## 图片缓存与清理
 
-Bot 生图、原始工作流执行、输出下载和工作台试画统一将原图缓存到 AstrBot 的 `data/plugin_data/astrbot_plugin_kuyo_comfyflow/output/`（由 `StarTools.get_data_dir` 定位）。缓存按图片内容哈希命名，保留原始字节，同内容复用并刷新保留时间，同名不同内容分别保存。旧版 output 图片也纳入清理。
+Bot 生图、输出下载和工作台试画统一将原图缓存到 AstrBot 的 `data/plugin_data/astrbot_plugin_kuyo_comfyflow/output/`（由 `StarTools.get_data_dir` 定位）。缓存按图片内容哈希命名，保留原始字节，同内容复用并刷新保留时间，同名不同内容分别保存。旧版 output 图片也纳入清理。
 
 管理员可发送：
 
@@ -46,20 +62,23 @@ Bot 生图、原始工作流执行、输出下载和工作台试画统一将原�
 
 配置项 `image_cache_auto_clean` 默认开启，启动及每小时执行清理；`image_cache_days` 默认 7 天；`image_cache_max_mb` 默认 1024 MiB。天数或容量设为 0 可关闭对应限制。清理只处理 output 直属图片，保留配方、工作流和生成历史。待通知、发送中和送达待确认任务引用的图片始终保留；自动清理及 `expired` 也保留各会话最近输出和工作台仍缓存的结果，供继续编辑或重复查询。手动 `clear` 可清理最近输出，但仍保护待交付任务和最近 5 分钟保存或复用的文件，因此容量可能暂时超限。历史里已清理图片的本地路径会失效。
 
-生成、配方与工作台试画保留模板输出节点的前缀和节点 ID；图片编辑按来源文件内容哈希命名远端输入，重复使用同一图片会得到相同输入文件名。仅修改映射参数及种子，保留其余节点、连线和固定加速 LoRA，让 ComfyUI 可以复用未变化的上游计算。实际缓存命中由 ComfyUI 的缓存策略和自定义节点行为决定。模型查询使用快速资源清单，资源刷新缺少某类定义时保留已有清单及元数据；端点明确返回空选项时才移除该类资源。
+生成、配方与工作台试画保留模板输出节点的前缀和节点 ID；图片编辑按来源文件内容哈希命名远端输入，重复使用同一图片会得到相同输入文件名。仅修改映射参数及种子，保留其余节点、连线和固定加速 LoRA，让 ComfyUI 可以复用未变化的上游计算。实际缓存命中由 ComfyUI 的缓存策略和自定义节点行为决定。模型查询使用快速资源清单，资源刷新缺少某类定义时保留已有清单及元数据；端点明确返回空选项时才移除该类资源。轻量 LoRA 目录补全缺少字段时沿用已有元数据与可信触发词，正常过期刷新仍更新目录；强制刷新可重新读取完整元数据。取回已有本地图片时不重新下载或改写字节，只刷新保留时间，与自动清理共享文件锁。
 
 ## 生图上下文与工作流适配
 
-默认 `llm_tool_mode=basic` 启用自由生图、配方生图、查询和任务管理；配置编辑工作流后也启用图片编辑。家族目录提供 `prompt_style`。生成与编辑工具先返回排队确认；完成事件包含发送状态和本地保存路径，任务 ID 保留在任务管理中，完整参数继续保存到生成历史。配方生图只需提示词及可选配方名。
+默认 `llm_tool_mode=basic` 启用自由生图、配方生图、查询和任务管理；配置编辑工作流后也启用图片编辑。家族目录提供 `prompt_style`。生成与编辑工具先返回排队确认；完成事件包含发送状态、原请求、生成摘要和内部任务标记，完整参数继续保存到生成历史。本地路径可通过任务管理取回。配方生图只需提示词及可选配方名。
 
 ## 后台生成队列
 
-自由生图、配方生图、图片编辑、高级兼容生成和原始工作流工具统一进入插件队列。校验并准备好工作流后，工具返回排队确认，当前 LLM 可以自然回应并继续聊天。后台按队列顺序提交 ComfyUI，通过 WebSocket 和 history 跟踪完成，下载最终输出并发送到原会话，再携带原对话历史及人格调用一次 LLM 告知结果。日常回复无需复述内部编号；用户询问时，可通过任务管理查询。
+自由生图、配方生图和图片编辑统一进入插件队列。校验并准备好工作流后，工具返回排队确认，当前 LLM 可以自然回应并继续聊天。后台按队列顺序提交 ComfyUI，通过 WebSocket 和 history 跟踪完成，下载最终输出并发送到原会话，再携带原对话历史及人格调用一次 LLM 告知结果。任务编号仅用于内部追溯，聊天回复不播报编号。
 
-完成通知使用独立事件，经过 `on_llm_request`、`on_llm_response`、`on_decorating_result` 和 AstrBot 的结果装饰及发送阶段，遵循本会话启用的插件、分段回复、内容清理及消息格式设置。插件可以拦截、清空或自行发送回复；普通文本通知按实际发送内容记录历史，清空后的原文不会写入对话。原消息的流式结束和停止标记不会影响后台通知。
+完成通知使用原平台事件的独立副本，保留平台能力和插件状态，重置旧回复、流式结束和停止标记；完成事件从这次后台回复开始重新计时，避免将 GPU 排队计入清理插件的 LLM 超时。原消息时间保留在完成事件的元数据中，恢复后的任务使用独立完成事件。回复依次经过 `on_waiting_llm_request`、`on_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_decorating_result` 及 AstrBot 的结果装饰和发送阶段，遵循本会话启用的插件、分段回复、内容清理及消息格式设置。插件对响应、运行上下文和事件结果的替换或清空都会保留，自行发送的内容不重复发送。通过共享 Context 直接发送的分段回复按异步任务和会话隔离捕获，历史只记录实际送达的完整文本。
 
-- `comfyui_job(action="status", task_id="C000001")` 查询状态、图片路径和通知状态；也兼容 `prompt_id`，省略编号查询本会话最近任务。
-- `comfyui_job(action="queue")` 查看本会话正在排队或执行的任务。
+- `comfyui_job(action="status", task_id="C000001")` 查询状态、图片数量和通知状态；也兼容 `prompt_id`，省略编号查询本会话最近任务。本地图片路径通过 `action="fetch"` 按需取回。
+- 排队回包和后台完成事件向模型提供内部任务编号，并标注“编号仅为内部标记，不用向用户声明或复述。”原请求、生成指令、模型家族、配方和工作流摘要用于关联具体任务；原请求最多 160 字符、生成指令最多 240 字符，内容相同时只展示一次，完整信息仍保存在任务记录中。队列列表只附一次内部使用说明；状态回包只返回图片数量，路径由 `fetch` 按需取回。后台请求保留原历史消息；开始 hook 只修改本次提示词时不会重新序列化历史，修改历史时也保留未变的前缀。发给用户的普通回复和后台完成回复过滤编号及说明，种子、节点 ID 和图片数量保留。全局队列诊断仅返回数量。
+- 完成通知日志按任务编号记录图片发送数量、LLM 实际调用、会话/对话/provider、返回耗时与文本长度，以及回复处理结果；关闭通知、会话切换或 hook 拦截有明确的跳过原因，调用和发送失败继续记录错误。
+- `comfyui_job(action="queue")` 查看本会话正在排队或执行的任务；`comfyui_system_stats` 的全局队列包含其他客户端提交的任务。
+- `comfyui_job(action="fetch", task_id="C000001")` 优先返回已有本地图片，缺失时补下载；也可填写 `prompt_id` 取回后端历史输出。已登记到其他会话的任务不会回退为外部任务，无论使用哪个编号字段都不能跨会话取图。补下载返回本地路径，不重复触发完成通知。
 - `comfyui_job(action="cancel", task_id="C000001")` 取消待提交任务或请求 ComfyUI 中断已提交任务。队列任务的 `wait` 操作立即返回状态，完成时自动通知。
 
 任务登记保存在插件数据目录的 `generation_jobs.json`。重载后继续处理待提交任务、跟踪已有 prompt_id、回收尚未下载的图片及发送待通知结果。等待超时会继续跟踪原任务。提交响应丢失或插件在提交期间退出时标记“提交结果待确认”，避免自动重复生成。发送期间退出时通知状态标记为 `unknown`，可查询结果并人工核实送达情况，避免自动重复发图。图片下载失败和通知失败分别保留状态及原 prompt_id。最近 200 个终态且通知已处理的任务保留在登记文件中。
@@ -135,13 +154,13 @@ Qwen Image 2.1 可分别配置 T2I 与编辑工作流：生图家族 `qwen` 绑�
 | `workflow_node_mappings` | 空 | 可重复添加的工作流节点映射；填写各槽位的节点 ID，优先于 Workflow Studio 档案和自动检测 |
 | `default_recipe` | `默认` | 用户只说「画一张」时用的配方；在工作台配方列表点「设为默认」自动写入，也可直接填配方名 |
 | `llm_tool_mode` | `basic` | `basic` 暴露自由生图、图片编辑（已配置时）、配方生图、查询和任务管理；`full` 打开诊断工具 |
-| `allow_llm_unsafe_tools` | `false` | 是否允许 LLM 使用旧版高级生成、执行任意工作流、读取本地图片上传、释放显存和删除配方；默认关闭 |
+| `allow_llm_unsafe_tools` | `false` | 是否允许 LLM 读取本地图片上传、释放显存和删除配方；默认关闭 |
 | `default_workflow` / `node_slots` | 旧版兼容 | `model_families` 为空时使用；新版槽位在 Workflow Studio 工作流页按工作流保存 |
 | `danbooru_base_url` | `https://danbooru.donmai.us` | danbooru 接口地址（国内可换镜像） |
 | `gelbooru_base_url` | `https://gelbooru.com` | gelbooru DAPI 地址（镜像可换） |
 | `civitai_api_key` | 空 | civitai API Key（可选，以你的身份调用） |
 | `animadex_mcp_url` / `animadex_timeout` | `http://127.0.0.1:11451/mcp` / `8.0` | AnimaDex 角色库 MCP 端点与查询超时；不用可忽略 |
-| `default_*` 生成参数 | 旧版兼容 | 新版配置页隐藏；已有值仅用于首次生成默认配方和高级兼容入口，日常参数请保存在配方中 |
+| `default_*` 生成参数 | 旧版兼容 | 新版配置页隐藏；已有值用于迁移为默认配方，日常参数请保存在配方中 |
 
 自由生图的参数优先级为本次 LLM 参数 > 工作流原值。配方生图的优先级为本次提示词/种子/画幅方向 > 配方参数 > 工作流原值。
 
@@ -174,32 +193,23 @@ Qwen Image 2.1 可分别配置 T2I 与编辑工作流：生图家族 `qwen` 绑�
 | `comfyui_draw` | 自由生图；必填 `model_family` 和 `prompt`，按家族选择工作流，可填写底模、LoRA、尺寸、分辨率选择器比例与目标 MP，并可另存配方 |
 | `comfyui_edit` | 用独立 `edit_workflow` 路由修改当前或引用消息中的一张或多张图片；可选分辨率与自定义画布参数 |
 | `comfyui_recipe_draw` | 快捷配方生图；填写本次 `prompt`，可选 `recipe`、`size` 和 `seed`，其余参数来自配方 |
-| `comfyui_lookup` | 查询角色 / 画师规范词，以及底模 / LoRA 文件名；支持按 LoRA 分类、标签、用途挑选，并返回用途说明、推荐权重和触发词 |
-| `comfyui_job` | 按任务编号查询状态、取消任务或查看本会话队列；完成后自动通知 |
+| `comfyui_lookup` | 统一查询角色、画师、作品系列与本地资源；支持家族筛选、分页、刷新、目录搜索和详细 tag 统计 |
+| `comfyui_job` | 本会话任务状态、取消、队列，以及 `action=fetch` 复用或补下载输出图片 |
 
 `llm_tool_mode=full` 额外启用以下工具，其中标注为需额外开关的工具还要求 `allow_llm_unsafe_tools=true`：
 
 | 工具 | 说明 |
 |:---|:---|
-| `comfyui_list_models` | 查询可用底模 / LoRA / CLIP / VAE / Embedding；支持 `kind`、`query`、`limit` 筛选，LoRA 显示分类、标签、推荐权重和触发词 |
-| `comfyui_generate` | 旧版高级生成入口；需额外开关，保留配方和工作流参数兼容 |
-| `comfyui_interrupt` | 中断生成（`prompt_id` 可选，默认最近一次），可同时取消排队任务 |
-| `comfyui_booru` | 查画师/角色触发词与常用 tag（`source`=danbooru/gelbooru） |
 | `comfyui_civitai_search` | 搜参考图并返回生成配方（模型/prompt/负向/sampler/steps/cfg/seed） |
 | `comfyui_model_info` | 查模型/LoRA 元数据与触发词（`source`=local / civitai） |
-| `comfyui_animadex` | 从 AnimaDex 查询角色、画师、作品系列及角色详情 |
-| `comfyui_queue` | 查询队列与 GPU 显存状态 |
-| `comfyui_fetch_outputs` | 按任务 ID 下载生成结果并返回本地路径 |
-| `comfyui_system_stats` | 查询设备、显存和系统内存状态 |
+| `comfyui_system_stats` | 查询设备、显存、系统内存及全局后端队列；`include_queue=false` 仅查系统 |
 | `comfyui_nodes` | 搜索节点类或查询节点输入输出结构 |
 | `comfyui_validate_workflow` | 提交前检查工作流节点和必填输入 |
-| `comfyui_models_search` | 按目录搜索已安装的模型文件 |
 | `comfyui_recipe` | 保存、列出、加载配方；`action` 必填，保存时用 `description` 写用途说明并引用模型家族；删除动作需额外开关 |
-| `comfyui_run_workflow` | 运行 ComfyUI API Format JSON 并发送结果，需额外开关 |
 | `comfyui_upload_file` | 上传本地图片至 ComfyUI 的 input 目录，需额外开关 |
 | `comfyui_free_memory` | 请求卸载模型、释放显存，需额外开关 |
 
-默认不会把 `comfyui_generate`、`comfyui_run_workflow`、`comfyui_upload_file`、`comfyui_free_memory` 交给 LLM，且 `comfyui_recipe` 的删除动作也要求在 Workflow Studio 手动完成。确有需要时，先开启 `allow_llm_unsafe_tools`。
+默认不会把 `comfyui_upload_file`、`comfyui_free_memory` 交给 LLM，且 `comfyui_recipe` 的删除动作也要求在 Workflow Studio 手动完成。确有需要时，先开启 `allow_llm_unsafe_tools`。
 
 底模与 LoRA 按 `model_family` 查询，支持 `anima`、`krea2`、`sdxl`、`flux`、`illustrious`、`pony` 等家族，以及配置规则中的自定义家族。例如：
 
@@ -208,12 +218,17 @@ comfyui_lookup(type="lora", model_family="anima", query="style")
 comfyui_lookup(type="lora", model_family="krea2", query="水彩")
 comfyui_lookup(type="model", model_family="sdxl")
 comfyui_lookup(type="model", query="miao miao harem")
-comfyui_list_models(kind="lora", model_family="anima", limit=5, offset=0)
-comfyui_list_models(kind="model", model_family="sdxl", limit=5)
-comfyui_list_models(query="miaomao")
+comfyui_lookup(type="lora", model_family="anima", limit=5, offset=0)
+comfyui_lookup(type="model", model_family="sdxl", limit=5)
+comfyui_lookup(type="all", query="miaomao")
+comfyui_lookup(type="clip", query="clip")
+comfyui_lookup(type="folder", folder="checkpoints", query="base")
+comfyui_lookup(type="all", refresh=true)
+comfyui_lookup(type="artist", query="artist_name", source="danbooru", detail=true)
+comfyui_lookup(type="copyright", query="作品名", source="animadex", page=2)
 ```
 
-默认每页 5 项，最多 10 项；有后续结果时返回 `next_offset`。省略家族和 `query` 时给出家族数量，`kind=all` 给资源数量摘要。填写 `query` 后可省略家族按文件名跨家族搜索；`kind=all` 会跨资源类别搜索。名称搜索忽略大小写与常见分隔符，找不到直接命中时返回少量近似名称并提示核对。搜索结果标明家族；选用底模或 LoRA 时仍需匹配生图工作流家族。`kind=model` 与 `kind=unet` 都表示底模。查询底模/LoRA 时可以省略 `query`，角色/画师查询仍需关键词。`comfyui_models_search` 和 `comfyui_model_info` 也支持家族参数；底模元数据用 `types="Checkpoint"`，LoRA 用 `types="LORA"`。
+默认每页 5 项，最多 10 项；有后续结果时返回 `next_offset`。省略家族和 `query` 时给出家族数量，`type=all` 给资源数量摘要。填写 `query` 后可省略家族按文件名跨家族搜索；`type=all` 会跨资源类别搜索。名称搜索忽略大小写与常见分隔符，找不到直接命中时返回少量近似名称并提示核对。搜索结果标明家族；选用底模或 LoRA 时仍需匹配生图工作流家族。`type=model` 表示底模。查询底模/LoRA 时可以省略 `query`，角色/画师查询仍需关键词。`comfyui_model_info` 也支持家族参数；底模元数据用 `types="Checkpoint"`，LoRA 用 `types="LORA"`。
 
 归类优先级：插件配置中的 `resource_family_rules` → 基础模型元数据 → 目录/文件名推断。配置规则支持大小写及斜杠归一化，例如 `kind=lora, family=anima, pattern=Anima/*`；无特征的底模可用完整文件名配置。家族名应与生图路由一致，自定义路由需添加对应规则。SDXL、Pony、Illustrious 分别列出；FLUX Krea 与 Krea2 分开归类。
 

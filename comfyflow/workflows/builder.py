@@ -17,7 +17,7 @@ from typing import Any
 
 from astrbot.api import logger
 
-from slot_mapping import (
+from .slots import (
     ANIMA_DROP_NODES,
     apply_slots,
     detect_slots,

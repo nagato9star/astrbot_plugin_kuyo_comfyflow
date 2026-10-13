@@ -67,13 +67,13 @@ class LocalSink:
 
 async def run(args):
     # Import the real SDK only after entering the separate artifact directory.
-    from comfy_client import ComfyUIClient
-    from generation_queue import GenerationQueue
-    from model_families import ModelFamilyRegistry, WorkflowProfileStore
-    from recipe_store import RecipeStore
-    from slot_mapping import detect_slots
-    from tools import ComfyuiDrawTool
-    from workflow_builder import WorkflowBuilder
+    from comfyflow.clients.comfyui import ComfyUIClient
+    from comfyflow.generation.queue import GenerationQueue
+    from comfyflow.workflows.registry import ModelFamilyRegistry, WorkflowProfileStore
+    from comfyflow.storage.recipes import RecipeStore
+    from comfyflow.workflows.slots import detect_slots
+    from comfyflow.tools import ComfyuiDrawTool
+    from comfyflow.workflows.builder import WorkflowBuilder
 
     for name in ("httpx", "httpcore", "PIL"):
         logging.getLogger(name).setLevel(logging.WARNING)

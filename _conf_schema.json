@@ -306,7 +306,7 @@
   "default_recipe": {
     "type": "string",
     "default": "默认",
-    "hint": "用户只说「画一张」时 comfyui_recipe_draw / comfyui_generate 用的配方名；在 Workflow Studio 静态配方列表点「设为默认」自动写入，也可直接填配方名"
+    "hint": "用户只说「画一张」时 comfyui_recipe_draw 用的配方名；在 Workflow Studio 静态配方列表点「设为默认」自动写入，也可直接填配方名"
   },
   "_tool_section": {
     "description": "=== LLM 工具 ===",
@@ -329,7 +329,7 @@
   "allow_llm_unsafe_tools": {
     "type": "bool",
     "default": false,
-    "hint": "允许 LLM 使用旧版高级生成入口、执行任意 API 工作流 JSON、上传本地文件到 ComfyUI、释放显存和删除配方。默认关闭；确有需要再开"
+    "hint": "允许 LLM 上传本地文件到 ComfyUI、释放显存和删除配方。默认关闭；确有需要再开"
   },
   "node_slots": {
     "type": "object",
@@ -438,7 +438,7 @@
     "type": "string",
     "invisible": true,
     "default": "",
-    "hint": "默认画师串（如 (@名字:1.2)），留空用模板原值；仅 comfyui_generate 未传 artist 时生效"
+    "hint": "默认画师串（如 (@名字:1.2)），留空用模板原值；用于迁移旧配置到默认配方；日常画师参数请保存在配方中"
   },
   "default_quality": {
     "type": "string",

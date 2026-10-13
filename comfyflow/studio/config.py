@@ -6,7 +6,7 @@ import copy
 import hashlib
 from typing import Any
 
-from slot_mapping import SLOT_ROLES, node_matches_slot, node_options_for_slot, parse_node_option
+from ..workflows.slots import SLOT_ROLES, node_matches_slot, node_options_for_slot, parse_node_option
 
 
 _WORKFLOW_TEMPLATE_PREFIX = "local_workflow_"

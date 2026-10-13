@@ -80,15 +80,15 @@ if "astrbot" not in sys.modules:
     sys.modules["astrbot.core.agent.run_context"] = _run_context
     sys.modules["astrbot.core.astr_agent_context"] = _astr_context
 
-from comfy_client import (  # noqa: E402
+from comfyflow.clients.comfyui import (  # noqa: E402
     ComfyUIClient,
     execution_error_message,
     image_media_type,
 )
-from api_to_ui import api_to_ui, build_extra_pnginfo  # noqa: E402
-from model_families import ModelFamilyRegistry, WorkflowProfileStore  # noqa: E402
-from recipe_store import RecipeStore  # noqa: E402
-from slot_mapping import (  # noqa: E402
+from comfyflow.workflows.ui_conversion import api_to_ui, build_extra_pnginfo  # noqa: E402
+from comfyflow.workflows.registry import ModelFamilyRegistry, WorkflowProfileStore  # noqa: E402
+from comfyflow.storage.recipes import RecipeStore  # noqa: E402
+from comfyflow.workflows.slots import (  # noqa: E402
     apply_slots,
     collect_trigger_words,
     detect_slots,
@@ -100,16 +100,15 @@ from slot_mapping import (  # noqa: E402
     slots_from_config,
     ui_to_api,
 )
-from workflow_builder import WorkflowBuilder  # noqa: E402
-from workflow_graph import validate_api_workflow, validate_ui_snapshot  # noqa: E402
-from tools import (  # noqa: E402
+from comfyflow.workflows.builder import WorkflowBuilder  # noqa: E402
+from comfyflow.workflows.graph import validate_api_workflow, validate_ui_snapshot  # noqa: E402
+from comfyflow.tools import (  # noqa: E402
     ComfyuiDrawTool,
     ComfyuiEditTool,
-    ComfyuiGenerateTool,
     ComfyuiRecipeDrawTool,
     ComfyuiRecipeTool,
 )
-from config_options import refresh_config_options  # noqa: E402
+from comfyflow.studio.config import refresh_config_options  # noqa: E402
 from astrbot.api.message_components import Image, Reply  # noqa: E402
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -521,7 +520,6 @@ def test_llm_entry_schemas() -> None:
 
     with tempfile.TemporaryDirectory() as td:
         store = RecipeStore(Path(td), preferred_default="柔光")
-        profiles = WorkflowProfileStore(Path(td))
         store.save(
             {
                 "name": "柔光",
@@ -534,13 +532,6 @@ def test_llm_entry_schemas() -> None:
         assert recipe_draw.name == "comfyui_recipe_draw"
         assert recipe_draw.parameters["required"] == ["prompt"]
         assert recipe_draw.parameters["properties"]["recipe"]["enum"] == ["柔光"]
-        advanced = ComfyuiGenerateTool(
-            store=store,
-            families=registry,
-            profiles=profiles,
-        )
-        assert advanced.name == "comfyui_generate"
-        assert advanced.parameters["properties"]["lora"]["type"] == "array"
         recipe_tool = ComfyuiRecipeTool(store=store, families=registry)
         recipe_tool.refresh_schema()
         assert recipe_tool.parameters["required"] == ["action"]
@@ -1383,6 +1374,8 @@ def test_workflow_build() -> None:
     """anima-v3 五段式覆盖 + LoRA 插槽 + KSampler。模板不存在则跳过。"""
     b = _builder()
     try:
+        base = b.load_template("anima-v3")
+        slots = detect_slots(base)
         wf = b.build(
             prompt="1girl, garden",
             artist="(@testartist:1.0)",
@@ -1398,19 +1391,27 @@ def test_workflow_build() -> None:
     except FileNotFoundError:
         print("  workflow build SKIP (anima-v3 未安装)")
         return
-    assert "445" not in wf
-    assert wf["353"]["inputs"]["prompt"] == "1girl, garden"
-    assert wf["368"]["inputs"]["prompt"] == "(@testartist:1.0)"
-    assert wf["461"]["inputs"]["prompt"] == "@f1f"
-    assert wf["362"]["inputs"]["steps"] == 20
-    assert wf["478"]["inputs"]["lora_1"]["on"] is True
-    assert wf["458"]["inputs"]["unet_name"] == "m.safetensors"
+    for role, expected in (
+        ("prompt", "1girl, garden"),
+        ("artist", "(@testartist:1.0)"),
+        ("trigger_words", "@f1f"),
+    ):
+        slot = slots[role]
+        assert wf[slot["node"]]["inputs"][slot["field"]] == expected
+    values = read_current_values(wf, slots)
+    assert values["steps"] == 20 and values["cfg"] == 1
+    assert values["model"] == "m.safetensors"
+    assert values["loras"] == [{"name": "l1.safetensors", "strength": 0.5}]
+    # 可选 LoRA 槽位的覆盖不应改变独立加速 LoRA。
+    for node_id, node in base.items():
+        if node["class_type"] == "LoraLoaderModelOnly" and node_id in wf:
+            assert wf[node_id] == node
     print("  workflow build OK")
 
 
 def test_defaults_precedence() -> None:
     """配方 defaults 覆盖：显式值优先，0/空视为未配置。种子不复用配方旧值。"""
-    from recipe_store import materialize_values
+    from comfyflow.storage.recipes import materialize_values
 
     recipe = {"defaults": {"model": "a.safetensors", "steps": 20, "width": 832, "seed": 7}}
     values = materialize_values(recipe, {"prompt": "1girl", "steps": 12, "width": None})
@@ -1424,22 +1425,6 @@ def test_defaults_precedence() -> None:
     print("  defaults precedence OK")
 
 
-def test_generation_entry_resolution() -> None:
-    """双入口判定：显式 recipe > 显式 workflow > 默认配方 > 模板。"""
-    from recipe_store import resolve_generation_entry
-
-    assert resolve_generation_entry("Krea", "anima-v3", has_default_recipe=True) == (
-        "recipe",
-        "Krea",
-    )
-    # 显式 workflow 强制模板入口，不被默认配方吞掉
-    assert resolve_generation_entry("", "anima-v3", has_default_recipe=True) == (
-        "workflow",
-        "anima-v3",
-    )
-    assert resolve_generation_entry("", "", has_default_recipe=True) == ("recipe", "")
-    assert resolve_generation_entry("", "", has_default_recipe=False) == ("workflow", "")
-    print("  generation entry resolution OK")
 
 
 def test_recipe_base_slots_binding() -> None:
@@ -1550,11 +1535,10 @@ def test_lora_list_input() -> None:
     except FileNotFoundError:
         print("  lora list/dict input SKIP (anima-v3 未安装)")
         return
-    assert wf["478"]["inputs"]["lora_1"]["on"] is True
-    assert wf["478"]["inputs"]["lora_1"]["lora"] == "l1.safetensors"
+    slots = detect_slots(b.load_template("anima-v3"))
+    assert read_current_values(wf, slots)["loras"] == [{"name": "l1.safetensors", "strength": 0.5}]
     wf2 = b.build(prompt="1girl", lora={"name": "l2.safetensors", "strength": 0.7})
-    assert wf2["478"]["inputs"]["lora_1"]["on"] is True
-    assert wf2["478"]["inputs"]["lora_1"]["lora"] == "l2.safetensors"
+    assert read_current_values(wf2, slots)["loras"] == [{"name": "l2.safetensors", "strength": 0.7}]
     print("  lora list/dict input OK")
 
 
@@ -1611,7 +1595,7 @@ def test_graph_workflow_validation() -> None:
 
 
 def test_graph_webapi_submission() -> None:
-    import webapi as webapi_module
+    from comfyflow.studio import api as webapi_module
 
     wf = {
         "445": {"class_type": "LoadImage", "inputs": {"image": "reference.png"}},
@@ -1745,7 +1729,7 @@ def test_execution_status_and_image_media_type() -> None:
 
 
 def test_webapi_original_output_and_interrupt_guard() -> None:
-    import webapi as webapi_module
+    from comfyflow.studio import api as webapi_module
 
     png = b"\x89PNG\r\n\x1a\noriginal-png-bytes"
 
@@ -1905,7 +1889,7 @@ def test_webapi_original_output_and_interrupt_guard() -> None:
 
 
 def test_studio_recipe_workflow_independence() -> None:
-    import webapi as webapi_module
+    from comfyflow.studio import api as webapi_module
     from unittest.mock import patch
 
     class FakeConfig(dict):
@@ -2070,7 +2054,7 @@ def test_image_cache_lifecycle() -> None:
     import os
     import time
     from concurrent.futures import ThreadPoolExecutor
-    from image_cache import manage_cache, save_image
+    from comfyflow.storage.images import manage_cache, save_image
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td) / "output"
@@ -2115,7 +2099,7 @@ def test_manual_profile_skips_detection() -> None:
         profiles = WorkflowProfileStore(Path(td))
         slots = {"prompt": {"node": "2", "field": "text"}}
         profiles.save("custom", slots)
-        with patch("model_families.detect_slots", side_effect=AssertionError("unexpected detection")):
+        with patch("comfyflow.workflows.registry.detect_slots", side_effect=AssertionError("unexpected detection")):
             assert profiles.effective("custom", {})["slots"]["prompt"]["node"] == "2"
         try:
             apply_slots({}, slots, {"prompt": "test"})
@@ -2127,8 +2111,9 @@ def test_manual_profile_skips_detection() -> None:
 
 
 def test_resource_family_queries() -> None:
-    from resource_catalog import filename_matches, filter_family, resource_family, selection_error
-    from tools import ComfyuiLookupTool, ComfyuiListModelsTool, ComfyuiModelsSearchTool, _match_resource
+    from comfyflow.resources.catalog import filename_matches, filter_family, resource_family, selection_error
+    from comfyflow.tools import ComfyuiLookupTool
+    from comfyflow.tools.common import _match_resource
 
     resources = {
         "unet_name": [
@@ -2199,24 +2184,24 @@ def test_resource_family_queries() -> None:
         assert "mystery.safetensors" not in await lookup.call(None, type="model", query="mysteri")
         unknown = await lookup.call(None, type="lora", model_family="unknown")
         assert "unknown.safetensors" in unknown and "未确认兼容性" in unknown
-        listing = await ComfyuiListModelsTool(client=client).call(None, kind="lora", model_family="krea2")
+        listing = await lookup.call(None, type="lora", model_family="krea2")
         assert "Krea2/style" in listing and "SDXL/style" not in listing
-        model_listing = await ComfyuiListModelsTool(client=client).call(None, kind="model", model_family="sdxl")
+        model_listing = await lookup.call(None, type="model", model_family="sdxl")
         assert "SDXL/base" in model_listing and "Anima/base" not in model_listing
-        by_name = await ComfyuiListModelsTool(client=client).call(None, query="miaomao")
+        by_name = await lookup.call(None, type="all", query="miaomao")
         assert "底模: Anima/miao_miaoHarem" in by_name and "近似名称" in by_name
         assert "SDXL/base" not in by_name
-        direct_name = await ComfyuiListModelsTool(client=client).call(None, kind="model", query="miao-miao")
+        direct_name = await lookup.call(None, type="model", query="miao-miao")
         assert "Anima/miao_miaoHarem" in direct_name and "近似名称" not in direct_name
-        lora_name = await ComfyuiListModelsTool(client=client).call(None, kind="lora", query="stile00")
+        lora_name = await lookup.call(None, type="lora", query="stile00")
         assert "Anima/style00" in lora_name and "近似名称" in lora_name
         purpose_without_family = await lookup.call(None, type="lora", query="watercolor")
         assert "Anima/style00" not in purpose_without_family
         purpose_with_family = await lookup.call(None, type="lora", model_family="anima", query="watercolor")
         assert "Anima/style00" in purpose_with_family
-        folder = await ComfyuiModelsSearchTool(client=client).call(None, folder="unet", model_family="anima")
+        folder = await lookup.call(None, type="folder", folder="unet", model_family="anima")
         assert "Anima/base" in folder and "SDXL/base" not in folder
-        folder_name = await ComfyuiModelsSearchTool(client=client).call(None, folder="unet", query="miaomao")
+        folder_name = await lookup.call(None, type="folder", folder="unet", query="miaomao")
         assert "Anima/miao_miaoHarem" in folder_name and "近似名称" in folder_name
         draw = ComfyuiDrawTool(client=client)
         name, error = await draw._resolve_model("base", "anima")
@@ -2289,7 +2274,6 @@ def main() -> None:
     test_xb_sampler_seed_control_snapshot()
     test_workflow_build()
     test_defaults_precedence()
-    test_generation_entry_resolution()
     test_recipe_base_slots_binding()
     test_dual_sampler_external_int()
     test_collect_trigger_words()

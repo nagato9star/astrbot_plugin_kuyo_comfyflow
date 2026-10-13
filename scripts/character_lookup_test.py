@@ -10,10 +10,10 @@ from pathlib import Path
 import httpx
 
 import smoke_test  # noqa: F401 - install the same AstrBot stubs as the core smoke suite
-from animadex import AnimaDexClient, _extract_text
-from character_tags import CharacterTagLookup, format_character_result, name_entries
-from external_search import DanbooruClient
-from tools import ComfyuiLookupTool
+from comfyflow.clients.animadex import AnimaDexClient, _extract_text
+from comfyflow.resources.characters import CharacterTagLookup, format_character_result, name_entries
+from comfyflow.clients.external import DanbooruClient
+from comfyflow.tools import ComfyuiLookupTool
 
 
 OFFICIAL = {
