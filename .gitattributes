@@ -1,2 +1,9 @@
 pages/workflow-editor/graph-editor.bundle.js text eol=lf linguist-generated=true
 pages/workflow-editor/graph-editor.bundle.css text eol=lf linguist-generated=true
+
+# 原文章节按字节核对，固定 LF 并保留分章边界原有的空行。
+skills/kuyo-comfyflow-generation/references/anima/chapters/*.md text eol=lf whitespace=-blank-at-eof,-blank-at-eol
+skills/kuyo-comfyflow-generation/references/moss/chapters/*.md text eol=lf whitespace=-blank-at-eof,-blank-at-eol
+skills/kuyo-comfyflow-generation/references/anima/manifest.json text eol=lf
+skills/kuyo-comfyflow-generation/references/moss/manifest.json text eol=lf
+skills/kuyo-comfyflow-generation/references/moss/LICENSE text eol=lf whitespace=-blank-at-eof

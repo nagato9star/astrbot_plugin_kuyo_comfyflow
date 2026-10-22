@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "source": "moss-with-placeholders.md",
+  "bytes": 89104,
+  "sha256": "15a7a02be6b742178c96ee775203622d73d59a7e384072f036b88cd50285f85c",
+  "heading_level": 2,
+  "max_lines": null,
+  "parts": [
+    {
+      "file": "chapters/000-任务与词条整理.md",
+      "title": "任务定义、词条整理与角色名",
+      "start_line": 1,
+      "end_line": 139,
+      "bytes": 8326,
+      "sha256": "f624a1798b236fed629494337c3215bad5bfcad3190a12b5664ec8117e610da9",
+      "merged_from": [
+        {
+          "file": "chapters/000-前言与元数据.md",
+          "title": "前言与元数据",
+          "start_line": 1,
+          "end_line": 16,
+          "bytes": 936,
+          "sha256": "a69dcf1ca84311af6535c5b1f2a09ceb3bf319428746e9f0ad21e5cb1b7e45fe"
+        },
+        {
+          "file": "chapters/001-MOSS-Image-提示词编译-SKILL.md",
+          "title": "MOSS-Image 提示词编译 SKILL",
+          "start_line": 17,
+          "end_line": 18,
+          "bytes": 36,
+          "sha256": "ec5c2142e4d6d191f9af7d0ae028cdc3d5665af448c9be3fd7bf793f0cc84afd"
+        },
+        {
+          "file": "chapters/002-0-任务定义与默认参数.md",
+          "title": "0. 任务定义与默认参数",
+          "start_line": 19,
+          "end_line": 75,
+          "bytes": 3285,
+          "sha256": "cf6eaf1d89476b08f0ec9552f51359416d50e4eb22184b5b863d4f66113e7fdb"
+        },
+        {
+          "file": "chapters/003-1-Step-1-输入词条清洗.md",
+          "title": "1. Step 1：输入词条清洗",
+          "start_line": 76,
+          "end_line": 118,
+          "bytes": 2360,
+          "sha256": "52c37e566ba84c43287ccc5392d409d14c5976445bd48b1708d9c0d98d3b337e"
+        },
+        {
+          "file": "chapters/004-2-角色名保留-画师名删除-以及少数例外.md",
+          "title": "2. 角色名保留、画师名删除，以及少数例外",
+          "start_line": 119,
+          "end_line": 139,
+          "bytes": 1709,
+          "sha256": "f767e56c5687c37ed11f1bc241145b81f4e8dcd00f57d9707ddc020ebb052b79"
+        }
+      ]
+    },
+    {
+      "file": "chapters/001-媒介光影与构图.md",
+      "title": "媒介、光影与构图",
+      "start_line": 140,
+      "end_line": 248,
+      "bytes": 17536,
+      "sha256": "2e396efd0b5ae057ba10e023b430e61480c89b77129d3ac2db114e02c8c4da17",
+      "merged_from": [
+        {
+          "file": "chapters/005-3-确定图片媒介与场景光影.md",
+          "title": "3. 确定图片媒介与场景光影",
+          "start_line": 140,
+          "end_line": 214,
+          "bytes": 12202,
+          "sha256": "e51e25612b306c4b839fa23c8912a507686103c47993cefb21a16a25d9a7525e"
+        },
+        {
+          "file": "chapters/006-4-按画面复杂度决定分块还是生成单段短文.md",
+          "title": "4. 按画面复杂度决定分块还是生成单段短文",
+          "start_line": 215,
+          "end_line": 248,
+          "bytes": 5334,
+          "sha256": "dedcdacded61f9c7bf3bcea30616c8a974fa4510b7bf6c8c35389197f7230832"
+        }
+      ]
+    },
+    {
+      "file": "chapters/002-人物外观与互动.md",
+      "title": "人物外观、动作与多人归属",
+      "start_line": 249,
+      "end_line": 315,
+      "bytes": 5204,
+      "sha256": "c59feb9164b293577c3d92c84d8f890fa7e3776799cf5988930b815c6b5bf8e8",
+      "merged_from": [
+        {
+          "file": "chapters/007-5-控制人物的年龄-骨相与身材.md",
+          "title": "5. 控制人物的年龄、骨相与身材",
+          "start_line": 249,
+          "end_line": 272,
+          "bytes": 451,
+          "sha256": "de6925559969b18e78b5147948c08fbc3323be609cbb2508240064eb78b8eae2"
+        },
+        {
+          "file": "chapters/008-6-控制头发质感-确保面部表情与肢体结构准确.md",
+          "title": "6. 控制头发质感，确保面部表情与肢体结构准确",
+          "start_line": 273,
+          "end_line": 293,
+          "bytes": 2200,
+          "sha256": "23aa53097354e70d2c1b2805de797c7cf5d78fcc27cda8dfee29cf3a4229b9f7"
+        },
+        {
+          "file": "chapters/009-7-多人同框时按位置分区并写明各自差异-防止人物画成双胞胎.md",
+          "title": "7. 多人同框时按位置分区并写明各自差异，防止人物画成双胞胎",
+          "start_line": 294,
+          "end_line": 315,
+          "bytes": 2553,
+          "sha256": "9c3f6df1917dde957aab62d4a367e112351808aa35dc7725c00f9d0e70b0bb70"
+        }
+      ]
+    },
+    {
+      "file": "chapters/003-图内文字与游戏界面.md",
+      "title": "图内文字与游戏界面",
+      "start_line": 316,
+      "end_line": 379,
+      "bytes": 6133,
+      "sha256": "dc7c6b2590a0842359c3f9dd2c06c95cf98152f7c11fd74875c2aeffbcb4c3b2",
+      "merged_from": [
+        {
+          "file": "chapters/010-8-按画面内文字密度设置写法与采样参数.md",
+          "title": "8. 按画面内文字密度设置写法与采样参数",
+          "start_line": 316,
+          "end_line": 361,
+          "bytes": 3819,
+          "sha256": "16679008b13da7ab3c02c836b5ba6b643408a23a9a7adb1c6155c18843da49ff"
+        },
+        {
+          "file": "chapters/011-9-生成游戏实机截图时要在四角写出具体界面元素.md",
+          "title": "9. 生成游戏实机截图时要在四角写出具体界面元素",
+          "start_line": 362,
+          "end_line": 379,
+          "bytes": 2314,
+          "sha256": "2e085a40cdc510f059a3975625d2f5d59f8a2c466502b2c71aa5f4d4ed39932b"
+        }
+      ]
+    },
+    {
+      "file": "chapters/004-输出自检与排错.md",
+      "title": "输出模板、自检、排错与参数说明",
+      "start_line": 380,
+      "end_line": 503,
+      "bytes": 11899,
+      "sha256": "5c3aa69b386f88e48d9d13dcaeda6ffe469ef43006a0359e304aac26365974aa",
+      "merged_from": [
+        {
+          "file": "chapters/012-10-按模板生成正面与负面提示词并逐项自检.md",
+          "title": "10. 按模板生成正面与负面提示词并逐项自检",
+          "start_line": 380,
+          "end_line": 410,
+          "bytes": 1949,
+          "sha256": "3bed4b3b14193478534aa20c1f869a778b39d024eb10e3d8496a651b41f18f4e"
+        },
+        {
+          "file": "chapters/013-11-实测无效的禁用清单.md",
+          "title": "11. 实测无效的禁用清单",
+          "start_line": 411,
+          "end_line": 444,
+          "bytes": 3162,
+          "sha256": "3e2dc3e65fcec2041e282980f99afb1d38e48d570b489738a75b9ec976445c6c"
+        },
+        {
+          "file": "chapters/014-12-解释实验现象的原因推测.md",
+          "title": "12. 解释实验现象的原因推测",
+          "start_line": 445,
+          "end_line": 456,
+          "bytes": 1224,
+          "sha256": "bdc4ab87bdd7dfe26f84e6e914bd504b8d8ea08a6925396ff0464b83f82e5a1a"
+        },
+        {
+          "file": "chapters/015-13-对照官方规范并说明本文件的采样参数.md",
+          "title": "13. 对照官方规范并说明本文件的采样参数",
+          "start_line": 457,
+          "end_line": 503,
+          "bytes": 5564,
+          "sha256": "a3d2d3eb20a8be13f5db16773fcc7b6440f7cfac218ce38361c97ccc40609152"
+        }
+      ]
+    },
+    {
+      "file": "chapters/005-Layout结构与坐标.md",
+      "title": "Layout 结构与坐标",
+      "start_line": 504,
+      "end_line": 560,
+      "bytes": 3671,
+      "sha256": "d8dc3127bb11ae9419068d93e31d8e7cc52013f307e65f820bfae5bf88e34e3f",
+      "merged_from": [
+        {
+          "file": "chapters/016-14-按官方-Layout-JSON-schema-生成结构化提示词.md",
+          "title": "14. 按官方 Layout JSON schema 生成结构化提示词",
+          "start_line": 504,
+          "end_line": 560,
+          "bytes": 3671,
+          "sha256": "d8dc3127bb11ae9419068d93e31d8e7cc52013f307e65f820bfae5bf88e34e3f"
+        }
+      ]
+    },
+    {
+      "file": "chapters/006-二次元风格与分块描述.md",
+      "title": "二次元风格与分块描述",
+      "start_line": 561,
+      "end_line": 699,
+      "bytes": 18841,
+      "sha256": "a6c74863f745c7ef324e60b7e9c4302c56f8aa10e2b6908b5140d50ed88109eb",
+      "merged_from": [
+        {
+          "file": "chapters/017-15-控制动漫与二次元画面风格-以及避开-Gemma-4-重打标丢失的信息.md",
+          "title": "15. 控制动漫与二次元画面风格，以及避开 Gemma 4 重打标丢失的信息",
+          "start_line": 561,
+          "end_line": 635,
+          "bytes": 11821,
+          "sha256": "343358e8463dfcab462b1e8432111fc2370edc8b5727abe6350f545c2edb5264"
+        },
+        {
+          "file": "chapters/018-16-用-概念-概念-闭合标签分块生成提示词与标注训练集.md",
+          "title": "16. 用 `<|概念|>...<|/概念|>` 闭合标签分块生成提示词与标注训练集",
+          "start_line": 636,
+          "end_line": 699,
+          "bytes": 7020,
+          "sha256": "c7b54ef5324b36bca7dd260d019dbba8c0cdeec86af5fc90d8a9dde8280b41c0"
+        }
+      ]
+    }
+  ],
+  "grouping": "semantic"
+}

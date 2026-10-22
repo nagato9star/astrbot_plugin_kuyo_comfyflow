@@ -1,0 +1,95 @@
+{
+  "author": "Moeblack",
+  "repository_commit": "79f2e3e4e0981e1128ebd33b25f148913d905373",
+  "source_url": "https://github.com/Moeblack/moss-image-prompt-skill/blob/79f2e3e4e0981e1128ebd33b25f148913d905373/SKILL.md",
+  "source_blob_sha1": "c143bc1efe2a132d1fd3a7e0215fef176d0d06c4",
+  "source_sha256": "ec1a3f32d47da81d3068da58a5a4e93380f7200f760ec3b207309599c3ab5c35",
+  "source_lines": 925,
+  "reserved_ranges": [
+    {
+      "start_line": 250,
+      "end_line": 250
+    },
+    {
+      "start_line": 254,
+      "end_line": 261
+    },
+    {
+      "start_line": 263,
+      "end_line": 264
+    },
+    {
+      "start_line": 331,
+      "end_line": 331
+    },
+    {
+      "start_line": 397,
+      "end_line": 399
+    },
+    {
+      "start_line": 405,
+      "end_line": 409
+    },
+    {
+      "start_line": 555,
+      "end_line": 557
+    },
+    {
+      "start_line": 673,
+      "end_line": 679
+    },
+    {
+      "start_line": 698,
+      "end_line": 698
+    },
+    {
+      "start_line": 701,
+      "end_line": 707
+    },
+    {
+      "start_line": 717,
+      "end_line": 723
+    },
+    {
+      "start_line": 733,
+      "end_line": 740
+    },
+    {
+      "start_line": 744,
+      "end_line": 748
+    },
+    {
+      "start_line": 802,
+      "end_line": 808
+    },
+    {
+      "start_line": 814,
+      "end_line": 815
+    },
+    {
+      "start_line": 817,
+      "end_line": 824
+    },
+    {
+      "start_line": 826,
+      "end_line": 827
+    },
+    {
+      "start_line": 831,
+      "end_line": 865
+    }
+  ],
+  "preservation": "All unreserved lines are byte-identical to the source; reserved ranges contain placeholders.",
+  "excluded_ranges": [
+    {
+      "start_line": 700,
+      "end_line": 866,
+      "reason": "原文第 17–18 章：配套 LoRA 的厚涂与漫画母版，不随插件分发"
+    },
+    {
+      "start_line": 867,
+      "end_line": 925,
+      "reason": "原文第 19 章：对白气泡与角色归属，不随插件分发"
+    }
+  ]
+}

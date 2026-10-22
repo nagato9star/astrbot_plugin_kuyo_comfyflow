@@ -1,0 +1,175 @@
+{
+  "author": "Mishir0",
+  "repository_commit": "03d85fe45ad430cd3ef77fbd41107a2aeb4dcfcb",
+  "source_url": "https://github.com/Mishir0/anima-prompt-skill/blob/03d85fe45ad430cd3ef77fbd41107a2aeb4dcfcb/docs/Anima%E6%8F%90%E7%A4%BA%E8%AF%8D%E6%95%99%E7%A8%8B.md",
+  "source_blob_sha1": "d3d429d6d2e36a53bf6b5306e9d0fd24a5f74e39",
+  "source_sha256": "628f87166bf63b0cb5e3fa2e9fbdd50971cf4760e9af872bfb7d20e77fb8531d",
+  "source_lines": 2134,
+  "reserved_ranges": [
+    {
+      "start_line": 31,
+      "end_line": 31
+    },
+    {
+      "start_line": 106,
+      "end_line": 107
+    },
+    {
+      "start_line": 163,
+      "end_line": 163
+    },
+    {
+      "start_line": 194,
+      "end_line": 194
+    },
+    {
+      "start_line": 283,
+      "end_line": 283
+    },
+    {
+      "start_line": 287,
+      "end_line": 287
+    },
+    {
+      "start_line": 310,
+      "end_line": 322
+    },
+    {
+      "start_line": 336,
+      "end_line": 336
+    },
+    {
+      "start_line": 353,
+      "end_line": 373
+    },
+    {
+      "start_line": 445,
+      "end_line": 445
+    },
+    {
+      "start_line": 502,
+      "end_line": 502
+    },
+    {
+      "start_line": 778,
+      "end_line": 783
+    },
+    {
+      "start_line": 862,
+      "end_line": 862
+    },
+    {
+      "start_line": 986,
+      "end_line": 986
+    },
+    {
+      "start_line": 988,
+      "end_line": 988
+    },
+    {
+      "start_line": 1040,
+      "end_line": 1040
+    },
+    {
+      "start_line": 1076,
+      "end_line": 1076
+    },
+    {
+      "start_line": 1084,
+      "end_line": 1084
+    },
+    {
+      "start_line": 1165,
+      "end_line": 1165
+    },
+    {
+      "start_line": 1174,
+      "end_line": 1198
+    },
+    {
+      "start_line": 1216,
+      "end_line": 1216
+    },
+    {
+      "start_line": 1235,
+      "end_line": 1235
+    },
+    {
+      "start_line": 1264,
+      "end_line": 1264
+    },
+    {
+      "start_line": 1285,
+      "end_line": 1285
+    },
+    {
+      "start_line": 1288,
+      "end_line": 1288
+    },
+    {
+      "start_line": 1330,
+      "end_line": 1330
+    },
+    {
+      "start_line": 1389,
+      "end_line": 1389
+    },
+    {
+      "start_line": 1391,
+      "end_line": 1391
+    },
+    {
+      "start_line": 1507,
+      "end_line": 1507
+    },
+    {
+      "start_line": 1562,
+      "end_line": 1562
+    },
+    {
+      "start_line": 1691,
+      "end_line": 1691
+    },
+    {
+      "start_line": 1714,
+      "end_line": 1714
+    },
+    {
+      "start_line": 1752,
+      "end_line": 1752
+    },
+    {
+      "start_line": 1757,
+      "end_line": 1762
+    },
+    {
+      "start_line": 1768,
+      "end_line": 1770
+    },
+    {
+      "start_line": 1788,
+      "end_line": 1793
+    },
+    {
+      "start_line": 1819,
+      "end_line": 1825
+    },
+    {
+      "start_line": 1846,
+      "end_line": 1846
+    },
+    {
+      "start_line": 1882,
+      "end_line": 1882
+    },
+    {
+      "start_line": 1937,
+      "end_line": 1968
+    },
+    {
+      "start_line": 2057,
+      "end_line": 2131
+    }
+  ],
+  "preservation": "All unreserved lines are byte-identical to the source; reserved ranges contain placeholders."
+}

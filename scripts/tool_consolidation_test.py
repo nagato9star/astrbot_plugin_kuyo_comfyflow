@@ -156,7 +156,20 @@ async def resources_and_sources():
     assert "unet_only" in unet and "checkpoint_only" not in unet
     assert "nested/example.bin" in await tool.call(None, type="folder", folder="custom")
     assert "查询失败" in await tool.call(None, type="folder", folder="missing")
-    print("resource kinds / cross-category search / refresh / paging / exact folders OK")
+    info = client.resources["lora_meta"]["Anima/style.safetensors"]
+    info.update(description="适合水彩插画。" * 80, notes="详细备注", tags=["watercolor"],
+                usage_tips={"strength": 0.6})
+    compact = await tool.call(None, type="lora", model_family="anima", query="style")
+    detailed = await tool.call(None, type="lora", model_family="anima", query="style", detail=True)
+    assert "适合水彩插画" in compact and "建议权重=0.6" in compact and "style_trigger" in compact
+    assert "详细备注" not in compact and "标签:" not in compact
+    assert "详细备注" in detailed and "标签: watercolor" in detailed and len(detailed) > len(compact)
+    for query in ({"type": "all", "query": "style"}, {"type": "folder", "folder": "loras", "model_family": "anima"}):
+        short = await tool.call(None, **query)
+        full = await tool.call(None, **query, detail=True)
+        assert "详细备注" not in short and "详细备注" in full
+        assert "style_trigger" in short and "建议权重=0.6" in short
+    print("resource kinds / cross-category search / refresh / paging / compact metadata OK")
 
     booru, gelbooru, animadex = Booru(), Gelbooru(), Animadex()
     tool = ComfyuiLookupTool(danbooru=booru, gelbooru=gelbooru, animadex=animadex)
@@ -177,6 +190,30 @@ async def resources_and_sources():
     )
     assert gelbooru.calls[-1][2] == 20
     print("compact artist query / detailed tags / source fallback / AnimaDex series and paging OK")
+
+
+async def recipe_discovery(root):
+    store = RecipeStore(root, preferred_default="清线")
+    store.save({"name": "水彩", "family": "krea2", "description": "窗边水彩插画",
+                "defaults": {"model": "Krea2/base.safetensors", "loras": [], "trigger_words": ""}})
+    store.save({"name": "清线", "family": "anima", "description": "干净线条与平涂",
+                "defaults": {"artist": "@verified_artist", "loras": [{"name": "Anima/style.safetensors", "strength": 0.6}]}})
+    before = {path.name: path.read_bytes() for path in store.recipe_dir.glob("*.json")}
+    tool = ComfyuiLookupTool(store=store)
+    first = await tool.call(None, type="recipe", limit=1)
+    second = await tool.call(None, type="recipe", limit=1, offset=1)
+    assert "next_offset=1" in first and "next_offset=" not in second
+    listing = await tool.call(None, type="recipe")
+    assert "水彩" in listing and "清线（默认）" in listing and "窗边水彩插画" in listing
+    assert "参数：" not in listing and "comfyui_recipe_draw" in listing
+    water = await tool.call(None, type="recipe", query="窗边", model_family="krea", detail=True)
+    assert "水彩" in water and "清线" not in water
+    assert '"loras": []' in water and '"trigger_words": ""' in water
+    assert "无匹配配方" in await tool.call(None, type="recipe", query="不存在")
+    assert "无匹配配方" in await tool.call(None, type="recipe", query="清线", model_family="krea2")
+    assert "尚未初始化" in await ComfyuiLookupTool().call(None, type="recipe")
+    assert before == {path.name: path.read_bytes() for path in store.recipe_dir.glob("*.json")}
+    print("basic recipe discovery / purpose search / family aliases / paging / defaults / read-only integrity OK")
 
 
 async def outputs_and_scope(root):
@@ -272,6 +309,7 @@ async def outputs_and_scope(root):
 async def main():
     await resources_and_sources()
     with tempfile.TemporaryDirectory() as directory:
+        await recipe_discovery(Path(directory) / "recipes")
         await outputs_and_scope(Path(directory))
     print("tool consolidation regressions OK")
 

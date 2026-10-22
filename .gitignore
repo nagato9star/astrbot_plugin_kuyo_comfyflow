@@ -11,3 +11,10 @@ metadata_debug.log
 # 误把 AstrBot 根目录当工作目录启动时留下的运行数据（含密钥），不要入库
 data/
 pages/workflow-editor/node_modules/
+
+# 本地实测配方及私有部署资料不进入源码或发布包。
+/examples/recipe-packs/styles-*/
+/skills/*/references/*-tested-recipes.md
+/scripts/install_recipe_pack.py
+/scripts/recipe_pack_test.py
+/private/

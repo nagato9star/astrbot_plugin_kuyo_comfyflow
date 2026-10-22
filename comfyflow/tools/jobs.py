@@ -31,7 +31,7 @@ class ComfyuiJobTool(FunctionTool[AstrAgentContext]):
         "action=status：查询状态与输出；action=wait：返回队列任务当前状态；"
         "action=cancel：中断任务；action=queue：查看本会话的生成队列；"
         "action=fetch：复用或补下载输出图片。fetch 也支持显式 prompt_id 查询后端历史输出。"
-        "不传编号时查询本会话最近的任务。编号仅为内部标记，不用向用户声明或复述。插件队列任务自动通知完成，wait 也立即返回状态，无需反复查询。"
+        "不传编号时查询本会话最近的任务。结合原请求和当前人格自然说明结果，不照读状态字段；编号仅为内部标记，不用向用户声明或复述。插件队列任务自动通知完成，wait 也立即返回状态，无需反复查询。"
     )
     parameters: dict = Field(
         default_factory=lambda: {

@@ -295,6 +295,7 @@ def make_queue(root, context=None, client=None, **kwargs):
 async def async_receipt_and_delivery(root):
     queue, context, client, shared = make_queue(root, max_pending=2)
     origin = event()
+    origin.message_str = "画一只趴在窗边的猫"
     queue.begin_turn(origin)
     receipt = await queue.enqueue(
         {"1": {"class_type": "Demo", "inputs": {}}},
@@ -343,6 +344,14 @@ async def async_receipt_and_delivery(root):
     assert "task_id=C000001" in completion_request["prompt"]
     assert "prompt_id=pid-1" in completion_request["prompt"]
     assert "生成指令：cat" in completion_request["prompt"]
+    assert "原请求：画一只趴在窗边的猫" in completion_request["prompt"]
+    assert "已发送图片：2 张" in completion_request["prompt"]
+    assert "生图任务已完成。图片已发送，共" not in completion_request["prompt"]
+    assert "延续当前人格" in completion_request["prompt"]
+    assert "不要编造画面细节" in completion_request["prompt"]
+    assert any(("text", "Your image is ready!") in items for _, items in context.sent)
+    assert all("生图任务已完成" not in text for _, items in context.sent for kind, text in items if kind == "text")
+    assert context.conversation_manager.pairs[-1][2]["content"] == "Your image is ready!"
     assert "编号仅为内部标记，不用向用户声明或复述。" in completion_request["prompt"]
     history = queue.store.history_get("pid-1")
     assert history["values"]["seed"] == 42 and len(history["local_paths"]) == 2
@@ -460,6 +469,11 @@ async def failures_and_cancellation(root):
             assert not context.requests and not context.conversation_manager.pairs
         elif scenario == "cancel":
             assert job["state"] == "cancelled" and not client.downloads
+        if scenario in {"gpu", "download", "cancel"}:
+            prompt = context.requests[-1]["prompt"]
+            assert "已发送图片：0 张" in prompt
+            assert "任务状态：已完成" not in prompt
+            assert job["error"] in prompt
         await queue.close()
     queue, context, client, _ = make_queue(root / "lost-response")
     client.uncertain = True

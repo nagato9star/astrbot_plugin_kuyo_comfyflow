@@ -30,6 +30,8 @@ from ..resources.catalog import page_number
 from ..resources.catalog import resource_family
 from ..resources.catalog import selection_error
 from .common import _RESOURCE_QUERY_PROPERTIES, _as_bool, _match_resource
+from .recipe_lookup import lookup_recipes
+from ..storage.recipes import RecipeStore
 
 
 def _usage_tips_text(value: Any) -> str:
@@ -64,8 +66,12 @@ def _lora_info_summary(info: dict, detailed: bool = False) -> list[str]:
         lines.append("Civitai名称: " + str(info["model_name"]))
     if info.get("base_model"):
         lines.append("基础模型: " + str(info["base_model"]))
-    if detailed and info.get("description"):
-        lines.append("用途说明: " + str(info["description"]))
+    if info.get("description"):
+        description = str(info["description"])
+        if not detailed:
+            description = " ".join(description.split())
+            description = description[:120] + ("…" if len(description) > 120 else "")
+        lines.append("用途说明: " + description)
     tips = _usage_tips_text(info.get("usage_tips"))
     if tips:
         lines.append("使用建议: " + tips)
@@ -117,7 +123,7 @@ def _match_lora_resources(
 
 
 def _resource_page(client, resources, kind, query="", family="", limit=5, offset=0,
-                   include_unknown=False) -> str:
+                   include_unknown=False, detailed=False) -> str:
     all_names = resources.get("lora_name" if kind == "lora" else "unet_name") or []
     names = all_names
     meta = metadata_for(resources, kind)
@@ -143,7 +149,7 @@ def _resource_page(client, resources, kind, query="", family="", limit=5, offset
         near_note = "；近似名称，请核对" if mode == "near" else ""
         lines.append(f"{name} [家族={found or 'unknown'}；{source}{warning}{near_note}]")
         if kind == "lora":
-            lines.extend("  " + line[:240] for line in _lora_info_summary(meta.get(name) or {}, detailed=True))
+            lines.extend("  " + line[:240] for line in _lora_info_summary(meta.get(name) or {}, detailed=detailed))
     if offset + limit < len(matches):
         lines.append(f"next_offset={offset + limit}；可进一步用 query 缩小范围。")
     if not shown:
@@ -181,7 +187,7 @@ def _resource_matches(client, resources, kind, query, family="", include_unknown
 
 
 def _all_resource_search(client, resources, query, family="", limit=5, offset=0,
-                         include_unknown=False) -> str:
+                         include_unknown=False, detailed=False) -> str:
     rows = []
     for kind, title in (("model", "底模"), ("lora", "LoRA")):
         for name, mode, score in _resource_matches(client, resources, kind, query, family, include_unknown):
@@ -206,7 +212,7 @@ def _all_resource_search(client, resources, query, family="", limit=5, offset=0,
         lines.append(f"{title}: {name}{family_note}{near_note}")
         if title == "LoRA":
             info = (resources.get("lora_meta") or {}).get(name) or {}
-            lines.extend("  " + line[:240] for line in _lora_info_summary(info, detailed=True))
+            lines.extend("  " + line[:240] for line in _lora_info_summary(info, detailed=detailed))
     if offset + limit < len(rows):
         lines.append(f"next_offset={offset + limit}")
     if not shown:
@@ -470,11 +476,12 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
 
     name: str = "comfyui_lookup"
     description: str = (
-        "查询角色/画师规范词、作品系列及本机底模/LoRA/CLIP/VAE/Embedding。"
+        "查询角色/画师规范词、作品系列、本机底模/LoRA/CLIP/VAE/Embedding及已保存配方。"
         "model/lora 的 query 可跨家族按名称搜索；按用途挑选 LoRA 时填写生图家族，"
         "结果包含用途、推荐权重和已知触发词。选用文件名与家族须匹配生图工作流。"
         "character 默认支持中文名与有来源的外观参考；artist 触发词写进 artist。"
-        "detail=true 可取样统计作品 tag；source 可选 danbooru/gelbooru/animadex。"
+        "detail=true 展开资源元数据、配方参数，或取样统计角色/画师作品 tag；source 可选 danbooru/gelbooru/animadex。"
+        "recipe 按名称、用途或家族查已有配方，适合选用现成方案；查询不会修改配方。"
         "copyright 查询 AnimaDex 作品系列，page 指定页码。"
         "all 查询各类资源摘要或跨类别搜索；folder 按指定 ComfyUI 目录精确查找。"
         "refresh=true 刷新资源缓存，offset 按返回的 next_offset 翻页。"
@@ -485,8 +492,8 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
             "type": {
                 "type": "string",
                 "enum": ["character", "artist", "copyright", "model", "lora",
-                         "clip", "vae", "embedding", "all", "folder"],
-                "description": "查询对象；all=资源摘要/跨类别搜索，folder=指定目录",
+                         "clip", "vae", "embedding", "all", "folder", "recipe"],
+                "description": "查询对象；all=资源摘要/跨类别搜索，folder=指定目录，recipe=只读配方目录",
             },
             "query": {
                 "type": "string",
@@ -501,7 +508,7 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
                 "type": "string", "enum": ["auto", "danbooru", "gelbooru", "animadex"],
                 "description": "角色/画师来源；默认 auto，copyright 使用 animadex",
             },
-            "detail": {"type": "boolean", "description": "角色/画师是否附带作品 tag 统计，默认 false"},
+            "detail": {"type": "boolean", "description": "展开资源元数据、配方参数，或附带角色/画师作品 tag 统计，默认 false"},
             "sample_limit": {"type": "integer", "minimum": 1, "maximum": 50,
                              "description": "详细查询的作品取样数，默认 30"},
             "page": {"type": "integer", "minimum": 1, "description": "AnimaDex 页码，默认 1"},
@@ -514,6 +521,7 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
     animadex: AnimaDexClient | None = None
     character_lookup: CharacterTagLookup | None = None
     client: ComfyUIClient | None = None
+    store: RecipeStore | None = None
 
     async def _resources(self, kind: str, query: str, kwargs: dict) -> str:
         if self.client is None:
@@ -527,6 +535,7 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
         limit = kwargs.get("limit", 5)
         offset = kwargs.get("offset", 0)
         include_unknown = _as_bool(kwargs.get("include_unknown"))
+        detailed = _as_bool(kwargs.get("detail"))
         if kind == "folder":
             folder = str(kwargs.get("folder") or "").strip().lower()
             if not folder:
@@ -539,18 +548,18 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
             if folder_kind:
                 resources = {**resources, "lora_name" if folder_kind == "lora" else "unet_name": names}
                 return _resource_page(self.client, resources, folder_kind, query, family,
-                                      limit, offset, include_unknown)
+                                      limit, offset, include_unknown, detailed)
             return self._file_page(folder, names, query, limit, offset)
         if kind in {"model", "lora"}:
             return _resource_page(self.client, resources, kind, query, family,
-                                  limit, offset, include_unknown)
+                                  limit, offset, include_unknown, detailed)
         fields = {"model": ("unet_name", "底模"), "lora": ("lora_name", "LoRA"),
                   "clip": ("clip_name", "CLIP"), "vae": ("vae_name", "VAE"),
                   "embedding": ("embeddings", "Embedding")}
         if kind == "all":
             if query:
                 return _all_resource_search(self.client, resources, query, family,
-                                            limit, offset, include_unknown)
+                                            limit, offset, include_unknown, detailed)
             return "【资源数量摘要】\n" + "\n".join(
                 f"{title}: {len(resources.get(field) or [])}" for field, title in fields.values()
             ) + "\n指定 type 和 model_family 浏览资源，填写 query 可跨类别搜索。"
@@ -568,6 +577,8 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
         kind = str(kwargs.get("type") or "").strip().lower()
         query = str(kwargs.get("query") or "").strip()
+        if kind == "recipe":
+            return lookup_recipes(self.store, query, kwargs)
         if kind in {"model", "lora", "clip", "vae", "embedding", "all", "folder"}:
             return await self._resources(kind, query, kwargs)
         if kind not in {"character", "artist", "copyright"}:

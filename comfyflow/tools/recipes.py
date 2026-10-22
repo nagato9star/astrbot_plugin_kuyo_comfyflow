@@ -190,7 +190,7 @@ class ComfyuiRecipeTool(FunctionTool[AstrAgentContext]):
 
 _RECIPE_DRAW_DESC = (
     "使用已经实验并保存好的配方快捷生成新图片，完成后直接发送到当前会话；修改现有图片使用 comfyui_edit。"
-    "prompt 必填，recipe 在用户点名配方时填写；省略 recipe 使用配置的默认配方。"
+    "prompt 必填，可主动选择符合用户需求的已保存配方；需要了解用途先用 comfyui_lookup(type=recipe)。省略 recipe 使用配置的默认配方。"
     "配方保存底模、LoRA、画幅和采样参数，并通过 model family 使用当前配置的工作流。"
     "本工具用于复用固定方案；需要自由选择底模、LoRA 或采样参数时调用 comfyui_draw。"
     + _ASYNC_GENERATION_HINT
@@ -213,7 +213,7 @@ class ComfyuiRecipeDrawTool(FunctionTool[AstrAgentContext]):
                 },
                 "recipe": {
                     "type": "string",
-                    "description": "已保存的配方名。用户点名时填写，省略则使用默认配方",
+                    "description": "已保存的配方名。可按用户指定或匹配画风主动选择；省略使用默认配方",
                 },
                 "size": {
                     "type": "string",
@@ -240,7 +240,7 @@ class ComfyuiRecipeDrawTool(FunctionTool[AstrAgentContext]):
         )
         if names:
             prop["enum"] = names
-            prop["description"] = "用户点名时从 enum 选择；省略用默认配方"
+            prop["description"] = "从 enum 选择符合需求的配方；用途可用 comfyui_lookup(type=recipe) 查询，省略用默认配方"
         else:
             prop.pop("enum", None)
             prop["description"] = "当前没有配方，请先在 Workflow Studio 静态配方页保存"

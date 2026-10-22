@@ -1,4 +1,4 @@
-"""ComfyUI Direct — 局域网直连 ComfyUI API，提供图片生成与模型查询.
+"""Kuyo ComfyFlow — 局域网直连 ComfyUI API，提供图片生成与模型查询.
 
 2026-08-11 v2.0.0 重构：
 - 全部 HTTP 改 httpx.AsyncClient，不再阻塞事件循环
@@ -294,6 +294,7 @@ class ComfyUIDirectPlugin(Star):
             animadex=self._animadex,
             client=self._client,
             character_lookup=self._character_lookup,
+            store=self._store,
         )
 
         recipe_tool = ComfyuiRecipeTool(

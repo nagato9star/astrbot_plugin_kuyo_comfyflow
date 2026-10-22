@@ -70,7 +70,7 @@ Bot 生图、输出下载和工作台试画统一将原图缓存到 AstrBot 的 
 
 ## 后台生成队列
 
-自由生图、配方生图和图片编辑统一进入插件队列。校验并准备好工作流后，工具返回排队确认，当前 LLM 可以自然回应并继续聊天。后台按队列顺序提交 ComfyUI，通过 WebSocket 和 history 跟踪完成，下载最终输出并发送到原会话，再携带原对话历史及人格调用一次 LLM 告知结果。任务编号仅用于内部追溯，聊天回复不播报编号。
+自由生图、配方生图和图片编辑统一进入插件队列。校验并准备好工作流后，工具返回排队确认，当前 LLM 可以自然回应并继续聊天。后台按队列顺序提交 ComfyUI，通过 WebSocket 和 history 跟踪完成，下载最终输出并发送到原会话，再携带原对话历史及人格调用一次 LLM 告知结果。完成事件向 LLM 提供任务事实和原请求摘要，回复沿用当前人格、称呼及最近的聊天语气，自然回应具体的生图或编辑需求，不照读状态字段或固定播报图片数量。模型未读取成图，不应编造成图细节或评价效果；失败、取消或部分交付须如实说明。任务编号仅用于内部追溯，聊天回复不播报编号。
 
 完成通知使用原平台事件的独立副本，保留平台能力和插件状态，重置旧回复、流式结束和停止标记；完成事件从这次后台回复开始重新计时，避免将 GPU 排队计入清理插件的 LLM 超时。原消息时间保留在完成事件的元数据中，恢复后的任务使用独立完成事件。回复依次经过 `on_waiting_llm_request`、`on_llm_request`、`on_agent_begin`、`on_llm_response`、`on_agent_done`、`on_decorating_result` 及 AstrBot 的结果装饰和发送阶段，遵循本会话启用的插件、分段回复、内容清理及消息格式设置。插件对响应、运行上下文和事件结果的替换或清空都会保留，自行发送的内容不重复发送。通过共享 Context 直接发送的分段回复按异步任务和会话隔离捕获，历史只记录实际送达的完整文本。
 
@@ -184,7 +184,10 @@ Qwen Image 2.1 可分别配置 T2I 与编辑工作流：生图家族 `qwen` 绑�
 
 ## 🤖 LLM 工具
 
-插件随包提供 `comfyui-direct-generation` Skill，可在 AstrBot Skills 管理页启用。它按所选家族读取 Anima、Krea 2、MOSS-Image、Qwen-Image-2.1 的提示词参考，并指导模型选择生图、编辑和配方工具。
+插件随包提供 `kuyo-comfyflow-generation` Skill，可在 AstrBot Skills 管理页启用。Anima 与 MOSS 的社区参考已分章放在该 Skill 的 `references/anima/` 和 `references/moss/`，入口分别为 `index.md`；按需选择章节，部分段落留占位，来源版本和范围记录在各自的 `source-map.json`。当前默认入口另有聊天 bot 场景说明：Anima 适配任务、字段和前置规则；MOSS 按实际配置判断能力，未接入配套 LoRA 时跳过相应模板。它按所选家族读取 Anima、Krea 2、MOSS-Image、Qwen-Image-2.1 的提示词参考，并指导模型选择生图、编辑和配方工具。
+
+
+`comfyui_lookup(type="recipe", query="水彩", model_family="krea2")` 可按名称、用途或家族只读查询配方，结果标记默认配方，支持 `limit` / `offset` 分页；`detail=true` 展开保存的参数。模型可以选择符合需求的配方，无需用户记住配方名。LoRA 查询默认保留兼容性、用途摘要、使用建议和触发词，`detail=true` 再展开标签、备注等元数据。
 
 默认 `llm_tool_mode=basic` 启用以下工具；`comfyui_edit` 仅在至少配置一个可用的独立编辑工作流后启用：
 
