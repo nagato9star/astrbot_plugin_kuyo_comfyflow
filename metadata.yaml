@@ -3,7 +3,7 @@ display_name: Kuyo ComfyFlow
 desc: 局域网直连 ComfyUI API，按模型家族路由工作流并支持快捷配方生图
 short_desc: 模型家族路由与快捷配方生图
 logo: logo.png
-version: v2.7.3
+version: v2.8.0
 author: 长门九曜
 repo: https://github.com/nagato9star/astrbot_plugin_kuyo_comfyflow
 astrbot_version: ">=4.16,<5"
