@@ -23,6 +23,7 @@ Use the family's configured `prompt_style` and read only the matching reference 
 
 - `anima` or a Danbooru-style family: read `references/anima-prompting.md`.
 - `krea2`: read `references/krea2-prompting.md`.
+- `moss` / MOSS-Image workflows: read `references/moss-image-prompting.md`.
 - `qwen` / Qwen-Image-2.1 workflows: read `references/qwen-image-2.1-prompting.md`.
 
 Keep user-specified names, counts, colors, text, and spatial relations. Use the reference to adapt structure to the model; it does not override the user's requested content or the workflow's configured prompt style.

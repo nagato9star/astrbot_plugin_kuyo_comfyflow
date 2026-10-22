@@ -83,6 +83,8 @@ SLOT_CLASS_HINTS: dict[str, tuple[str, ...]] = {
     "trigger_words": ("CR Prompt Text", "CLIPTextEncode"),
     "model": (
         "UNETLoader",
+        "MOSSImageUNETLoader",
+        "MOSSImageHFDiTLoader",
         "CheckpointLoaderSimple",
         "UNETLoaderGGUF",
         "CheckpointLoader",
@@ -93,6 +95,7 @@ SLOT_CLASS_HINTS: dict[str, tuple[str, ...]] = {
     ),
     "clip": (
         "CLIPLoader",
+        "MOSSImageCLIPLoader",
         "DualCLIPLoader",
         "TripleCLIPLoader",
         "QuadrupleCLIPLoader",
@@ -110,8 +113,9 @@ SLOT_CLASS_HINTS: dict[str, tuple[str, ...]] = {
     "size": (
         "EmptyLatentImage",
         "EmptySD3LatentImage",
-        "EmptyHunyuanLatentImage",
         "EmptyFluxLatentImage",
+        "EmptyFlux2LatentImage",
+        "EmptyHunyuanLatentImage",
     ),
     "sampler": (
         "KSampler",

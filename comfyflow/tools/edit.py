@@ -396,7 +396,7 @@ class ComfyuiEditTool(FunctionTool[AstrAgentContext]):
             apply_values["source_images"] = uploads
         else:
             apply_values["source_image"] = uploads[0]
-        if slots.get("resolution"):
+        if slots.get("resolution") and resolution_provided:
             apply_values["resolution"] = effective_resolution
         if canvas_dimensions is not None:
             apply_values["width"], apply_values["height"] = canvas_dimensions

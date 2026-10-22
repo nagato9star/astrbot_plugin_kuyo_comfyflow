@@ -184,7 +184,7 @@ Qwen Image 2.1 可分别配置 T2I 与编辑工作流：生图家族 `qwen` 绑�
 
 ## 🤖 LLM 工具
 
-插件随包提供 `comfyui-direct-generation` Skill，可在 AstrBot Skills 管理页启用。它按所选家族读取 Anima、Krea 2、Qwen-Image-2.1 的提示词参考，并指导模型选择生图、编辑和配方工具。
+插件随包提供 `comfyui-direct-generation` Skill，可在 AstrBot Skills 管理页启用。它按所选家族读取 Anima、Krea 2、MOSS-Image、Qwen-Image-2.1 的提示词参考，并指导模型选择生图、编辑和配方工具。
 
 默认 `llm_tool_mode=basic` 启用以下工具；`comfyui_edit` 仅在至少配置一个可用的独立编辑工作流后启用：
 
