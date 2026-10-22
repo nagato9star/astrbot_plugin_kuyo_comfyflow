@@ -1,9 +1,9 @@
 ---
-name: comfyui-direct-generation
-description: Use when the user asks to generate or edit images with this ComfyUI Direct plugin, choose an image model family or LoRA, reuse a saved recipe, or interpret the plugin's image-generation tools.
+name: kuyo-comfyflow-generation
+description: Use when the user asks to generate or edit images with this Kuyo ComfyFlow plugin, choose an image model family or LoRA, reuse a saved recipe, or interpret the plugin's image-generation tools.
 ---
 
-# ComfyUI Direct image generation
+# Kuyo ComfyFlow image generation
 
 Use the plugin tools to generate or edit images. The available family and recipe names in the live tool schemas are authoritative.
 
@@ -22,22 +22,30 @@ Use the plugin tools to generate or edit images. The available family and recipe
 
 Use the family's configured `prompt_style` and read only the matching reference before composing the prompt:
 
-- `anima` or a Danbooru-style family: read `references/anima-prompting.md`.
+- `anima`: read the complete [prompt assembly and tool-use guide](references/anima/scenario/prompt-assembly.md). Tool selection, resource choice, field handling, composition and checks stay together. Use the [topic index](references/anima/index.md) for additional vocabulary or original material. Other Danbooru-style families follow their own configuration.
 - `krea2`: read `references/krea2-prompting.md`.
-- `moss` / MOSS-Image workflows: read `references/moss-image-prompting.md`.
+- `moss` / MOSS-Image: read the complete [workflow guide](references/moss/scenario/current-workflow.md); use the [topic index](references/moss/index.md) for details. Use LoRA-specific triggers, style channels and templates only when their matching resources are actually connected and mapped. Native text, Layout and multi-panel composition remain separate options.
 - `qwen` / Qwen-Image-2.1 workflows: read `references/qwen-image-2.1-prompting.md`.
 
-Keep user-specified names, counts, colors, text, and spatial relations. Use the reference to adapt structure to the model; it does not override the user's requested content or the workflow's configured prompt style.
+Keep user-specified names, counts, colors, text, and spatial relations. Current plugin scenario guidance governs task/tool behavior and field handling; source tutorial roles, scripts and fixed presets remain reference material. Use the reference to adapt structure to the model; it does not override the user's requested content or the workflow's configured prompt style.
+
+Recipe names, resource files, weights, triggers and sampling settings come from the current installation. This Skill ships no operator-specific recipes or workflow configurations; use the live catalog instead of assuming a particular setup is installed.
 
 ## Select models and LoRAs
 
 - Use the exact `model_family` selected by the user or exposed in the `comfyui_draw` schema. Do not infer a family from a model filename.
+- Respect the selected ComfyUI server's resource limits and known failed setups. Installed files do not prove a complete pipeline fits; include text encoder and VAE costs. Do not infer remote capacity from the controller machine or silently switch to another server or a heavier model family.
 - Fill `model` only when the user requests a base model change. Use an installed model name returned by `comfyui_lookup`.
-- When a LoRA can materially help with the requested style, character, clothing, or effect, query `comfyui_lookup` and select a compatible installed LoRA. The user does not need to say “LoRA” first.
+- For workflows that currently support mapped optional LoRAs, query `comfyui_lookup` and select compatible installed resources when useful for the requested style, character, clothing or effect; the user does not need to say “LoRA” first. Skip LoRA selection when the selected workflow has no mapped LoRA support.
 - For a LoRA purpose or category search, include the same `model_family` used for generation. A known filename can be searched directly across families; check compatibility before using it.
 - Pass LoRAs as an array of objects in `lora`, for example `[{"name":"style.safetensors","strength":0.6}]`. Use the returned filename and recommended strength. Omit `strength` when no recommendation is available. The plugin accepts the older string form for compatibility.
 - Add known trigger words to `trigger_words` when the lookup result or user provides them. Keep their original spelling. Omit the field when trigger words are unknown.
-- If the user asks to remove optional LoRAs, pass an empty `lora` array. Fixed accelerator LoRAs in the workflow remain intact.
+- Metadata may contain placeholders such as `@style_name` rather than literal triggers. Read the model description and supported-style list to resolve them; do not send a placeholder or invent a replacement. A metadata record alone does not validate the token's meaning.
+- Distinguish native artist tags from LoRA-specific triggers using the installed resource metadata. Keep each trigger with its matching LoRA and remove stale triggers when changing styles. If the workflow has a trigger field, pass `trigger_words=""` to clear an inherited trigger when the selected setup needs none.
+- Where the selected workflow supports them, actively choose compatible installed style LoRAs and verified native artist tags for the requested look; the user does not have to name them first. For broad style exploration, try varied artist combinations and multi-LoRA blends instead of repeatedly falling back to the same familiar styles. Do not impose a one-main-LoRA or one-main-plus-low-strength-helper limit.
+- Choose the combination and each weight deliberately, then judge the rendered image. Available recipes are reusable starting points; a weak result in one scene does not permanently exclude an artist or LoRA. Keep exact filenames, weights, artist tags, triggers, workflow and seed records so a promising mix can be repeated.
+- Missing trigger metadata does not prove a compatible LoRA is ineffective. Omit unknown triggers and try the LoRA; resolve documented style placeholders when present. Preserve fixed accelerator LoRAs and independent sampler settings rather than mixing accelerators as if they were art styles.
+- When a workflow has mapped optional LoRAs and the user asks to remove them, pass an empty `lora` array. Fixed accelerator LoRAs remain intact. For workflows without connected LoRAs and corresponding mappings, omit `lora` entirely.
 
 ## Reply after a tool call
 

@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "source": "anima-with-placeholders.md",
+  "bytes": 120838,
+  "sha256": "990c742e1eabc9260cd2d1007299b05da71b6cbcbef18fbfd6f70f6adc762e28",
+  "heading_level": 2,
+  "max_lines": null,
+  "parts": [
+    {
+      "file": "chapters/000-提示词组装完整流程.md",
+      "title": "提示词组装完整流程（原 0–4 章）",
+      "start_line": 1,
+      "end_line": 250,
+      "bytes": 13740,
+      "sha256": "91a566dd85c8d82a0100679780778e6225b723805feb6121c3c1c3248f971d87",
+      "merged_from": [
+        {
+          "file": "chapters/000-ANIMA3-提示词生成模板-v3-0.md",
+          "title": "ANIMA3 提示词生成模板 v3.0",
+          "start_line": 1,
+          "end_line": 9,
+          "bytes": 425,
+          "sha256": "c6c7cbcc6a10252aa4b6e812404e87dcbb54b7b87f96b813a90e35b90e70bf7a"
+        },
+        {
+          "file": "chapters/001-0-快速开始.md",
+          "title": "0. 快速开始",
+          "start_line": 10,
+          "end_line": 37,
+          "bytes": 2111,
+          "sha256": "66cef75daa13542f4af7092bcf4b4e605aef473e8270058e2b516da82843f1f8"
+        },
+        {
+          "file": "chapters/002-1-ROLE.md",
+          "title": "1. ROLE",
+          "start_line": 38,
+          "end_line": 55,
+          "bytes": 549,
+          "sha256": "5423fc18901a602bf898c685ecd7ce7e5c4232f54071a66aee6046e42aca997d"
+        },
+        {
+          "file": "chapters/003-2-OUTPUT-PROTOCOL.md",
+          "title": "2. OUTPUT PROTOCOL",
+          "start_line": 56,
+          "end_line": 69,
+          "bytes": 919,
+          "sha256": "7e2081bcc8bd328fe0d3745038820f2c1a41a49e0524b3ff9ee92d77527ac73b"
+        },
+        {
+          "file": "chapters/004-3-FINAL-SELF-CHECK.md",
+          "title": "3. FINAL SELF-CHECK",
+          "start_line": 70,
+          "end_line": 86,
+          "bytes": 880,
+          "sha256": "39af43dac2881914cef0820a649d2009a98094c8c1d26ad449c34e954b0651f3"
+        },
+        {
+          "file": "chapters/005-3-1-CONFLICT-TABLE.md",
+          "title": "3.1 CONFLICT TABLE",
+          "start_line": 87,
+          "end_line": 150,
+          "bytes": 3009,
+          "sha256": "728ca9ce4b05c19a6ff2f31af8312078fc9c4af661e331349a1bdf4197a35fc5"
+        },
+        {
+          "file": "chapters/006-4-SLOT-ORDER.md",
+          "title": "4. SLOT ORDER",
+          "start_line": 151,
+          "end_line": 250,
+          "bytes": 5847,
+          "sha256": "1bf44d1fb9652609f7848719cfe0c00bb8b0d80f0b6390a0520dc6751622ffdb"
+        }
+      ]
+    },
+    {
+      "file": "chapters/007-5-ASSEMBLY-DECISION-TREE.md",
+      "title": "5. ASSEMBLY DECISION TREE",
+      "start_line": 251,
+      "end_line": 373,
+      "bytes": 5474,
+      "sha256": "592d921f1cc5fe7496dfad3f8ae887642a2d89c1895217f8818109324e1654f4"
+    },
+    {
+      "file": "chapters/008-6-COUNT-IDENTITY.md",
+      "title": "6. COUNT & IDENTITY",
+      "start_line": 374,
+      "end_line": 411,
+      "bytes": 1451,
+      "sha256": "a1b0fed418cfa820013c0d8ab7ad5fffd0965209c4a2e1306e48c83a31eb7730"
+    },
+    {
+      "file": "chapters/009-7-APPEARANCE.md",
+      "title": "7. APPEARANCE",
+      "start_line": 412,
+      "end_line": 509,
+      "bytes": 6369,
+      "sha256": "b323cbca010bd24b85dbff2f44fb5b1b1022ff5cb828d3566e45fe52fe4cdf04"
+    },
+    {
+      "file": "chapters/010-8-CLOTHING-STATE.md",
+      "title": "8. CLOTHING & STATE",
+      "start_line": 510,
+      "end_line": 623,
+      "bytes": 9602,
+      "sha256": "abd1beec12b4a33acc4f671e8b1e514e102a0f3d562d09e45ac92d7a2b30a7e8"
+    },
+    {
+      "file": "chapters/011-8-4-8-职业制服改造实例-法典精华.md",
+      "title": "8.4.8 职业制服改造实例（法典精华）",
+      "start_line": 624,
+      "end_line": 723,
+      "bytes": 7359,
+      "sha256": "b73d1cfd6b5a7022eba46f69f2e7691799c709aaa4428847702edbda72075743"
+    },
+    {
+      "file": "chapters/012-9-POSE-ACTION-SEX.md",
+      "title": "9. POSE & ACTION & SEX",
+      "start_line": 724,
+      "end_line": 870,
+      "bytes": 11654,
+      "sha256": "7536ffed928aabb339a21a5e57f1417d347aa7d15cc29efeabefb5e3508b09d4"
+    },
+    {
+      "file": "chapters/013-9-2-2-足交.md",
+      "title": "9.2.2 足交",
+      "start_line": 871,
+      "end_line": 1023,
+      "bytes": 9327,
+      "sha256": "76bd59c7014561e6d377e5b741ee43742e8c4a02601480a4bada621a1e079e56"
+    },
+    {
+      "file": "chapters/014-9-3-2-站立位.md",
+      "title": "9.3.2 站立位",
+      "start_line": 1024,
+      "end_line": 1173,
+      "bytes": 8992,
+      "sha256": "8aa3a9863e52cc7b23e99ceac2183ed85a31d1a511ed0f9e0253140b22b2ef15"
+    },
+    {
+      "file": "chapters/015-9-3-8-水煎.md",
+      "title": "9.3.8 水煎",
+      "start_line": 1174,
+      "end_line": 1325,
+      "bytes": 9818,
+      "sha256": "6502f476a6e74c61df9eff7caaa1e772d18f772c7da7a755905480640acd81e4"
+    },
+    {
+      "file": "chapters/016-9-6-动作氛围链汇总.md",
+      "title": "9.6 动作氛围链汇总",
+      "start_line": 1326,
+      "end_line": 1355,
+      "bytes": 1423,
+      "sha256": "b0e982362f606e3a59070287adbcd59e93d0d712abfe84e4803e2829f9307430"
+    },
+    {
+      "file": "chapters/017-10-EXPRESSION-REACTION.md",
+      "title": "10. EXPRESSION & REACTION",
+      "start_line": 1356,
+      "end_line": 1433,
+      "bytes": 5136,
+      "sha256": "93386040a92c2c8c087d5a9834a0697060b4f337e4c3c63c10ac390df5f70f47"
+    },
+    {
+      "file": "chapters/018-11-CAMERA-SHOT.md",
+      "title": "11. CAMERA & SHOT",
+      "start_line": 1434,
+      "end_line": 1539,
+      "bytes": 5377,
+      "sha256": "95c1db8ce50c9d4ade5016ea3539680421ec77799c0d582f7a4050174b72fc08"
+    },
+    {
+      "file": "chapters/019-12-SCENE-ENVIRONMENT.md",
+      "title": "12. SCENE & ENVIRONMENT",
+      "start_line": 1540,
+      "end_line": 1648,
+      "bytes": 5273,
+      "sha256": "b547f6d7739494b4728386275495ce34708400913a382217bd9a21b3ac8245f0"
+    },
+    {
+      "file": "chapters/020-13-DETAIL-MOOD.md",
+      "title": "13. DETAIL & MOOD",
+      "start_line": 1649,
+      "end_line": 1738,
+      "bytes": 4705,
+      "sha256": "b4f15e66e5c0b3f93e1f0e671dbb20e9bafe190e5aad4dc52fb693d450126701"
+    },
+    {
+      "file": "chapters/021-14-SPECIAL-THEME.md",
+      "title": "14. SPECIAL THEME",
+      "start_line": 1739,
+      "end_line": 1872,
+      "bytes": 6033,
+      "sha256": "bd4fc1ac3bc9f9cea755e876d19ca9e6bc86e3350faf22446c961a5744da30eb"
+    },
+    {
+      "file": "chapters/022-14-5-异种.md",
+      "title": "14.5 异种",
+      "start_line": 1873,
+      "end_line": 2032,
+      "bytes": 7430,
+      "sha256": "793cbb92c294a5f3f450f934524518dcfcae4699eb279237fec4c571d46453a0"
+    },
+    {
+      "file": "chapters/023-14-10-另类日常.md",
+      "title": "14.10 另类日常",
+      "start_line": 2033,
+      "end_line": 2131,
+      "bytes": 3512,
+      "sha256": "075b3f451f10099e5688a52886c65c818d9eb79d35f12267d758aa2737929232"
+    },
+    {
+      "file": "chapters/024-15-EXAMPLES.md",
+      "title": "15. EXAMPLES",
+      "start_line": 2132,
+      "end_line": 2134,
+      "bytes": 387,
+      "sha256": "98419fcfc887e336dada9d1539d12d21d6f4fa0080ef68f55f8b1aa4770db807"
+    }
+  ],
+  "grouping": "semantic"
+}

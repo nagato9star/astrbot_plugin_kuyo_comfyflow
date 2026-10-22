@@ -184,7 +184,8 @@ Qwen Image 2.1 可分别配置 T2I 与编辑工作流：生图家族 `qwen` 绑�
 
 ## 🤖 LLM 工具
 
-插件随包提供 `comfyui-direct-generation` Skill，可在 AstrBot Skills 管理页启用。它按所选家族读取 Anima、Krea 2、MOSS-Image、Qwen-Image-2.1 的提示词参考，并指导模型选择生图、编辑和配方工具。
+插件随包提供 `kuyo-comfyflow-generation` Skill，可在 AstrBot Skills 管理页启用。Anima 与 MOSS 的社区参考已分章放在该 Skill 的 `references/anima/` 和 `references/moss/`，入口分别为 `index.md`；按需选择章节，部分段落留占位，来源版本和范围记录在各自的 `source-map.json`。当前默认入口另有聊天 bot 场景说明：Anima 适配任务、字段和前置规则；MOSS 按实际配置判断能力，未接入配套 LoRA 时跳过相应模板。它按所选家族读取 Anima、Krea 2、MOSS-Image、Qwen-Image-2.1 的提示词参考，并指导模型选择生图、编辑和配方工具。
+
 
 `comfyui_lookup(type="recipe", query="水彩", model_family="krea2")` 可按名称、用途或家族只读查询配方，结果标记默认配方，支持 `limit` / `offset` 分页；`detail=true` 展开保存的参数。模型可以选择符合需求的配方，无需用户记住配方名。LoRA 查询默认保留兼容性、用途摘要、使用建议和触发词，`detail=true` 再展开标签、备注等元数据。
 
