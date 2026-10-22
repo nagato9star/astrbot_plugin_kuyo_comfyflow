@@ -294,6 +294,7 @@ class ComfyUIDirectPlugin(Star):
             animadex=self._animadex,
             client=self._client,
             character_lookup=self._character_lookup,
+            store=self._store,
         )
 
         recipe_tool = ComfyuiRecipeTool(

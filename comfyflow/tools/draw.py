@@ -91,7 +91,7 @@ class ComfyuiDrawTool(FunctionTool[AstrAgentContext]):
                 },
                 "artist": {
                     "type": "string",
-                    "description": "画师风格。用户没点名画师就不要填",
+                    "description": "画师风格串。可根据用户期望的画风主动选择有依据的规范画师标签；仅在家族支持画师/tag 提示词时使用，未知名称先用 comfyui_lookup(type=artist) 核实；用户明确不指定画师时不填",
                 },
                 "quality": {
                     "type": "string",

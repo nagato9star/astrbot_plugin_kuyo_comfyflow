@@ -384,8 +384,8 @@ async def run(root):
     spec.loader.exec_module(module)
     reload_names = {"image_cache": "storage.images", "completion_reply": "generation.reply",
                     "completion_hooks": "generation.hooks", "completion_transport": "generation.transport",
-                    "task_receipt": "generation.receipts", "output_recovery": "generation.recovery",
-                    "lookup_sources": "resources.sources"}
+                    "task_receipt": "generation.receipts", "completion_notices": "generation.notices", "output_recovery": "generation.recovery",
+                    "lookup_sources": "resources.sources", "recipe_lookup": "tools.recipe_lookup"}
     prefix = package_name + ".comfyflow."
     old_modules = {name: importlib.import_module(prefix + path) for name, path in reload_names.items()}
     unrelated = ModuleType("other_plugin.comfyflow.fixture")
@@ -437,6 +437,10 @@ async def run(root):
             assert migrated["family"] == "demo" and migrated["defaults"]["steps"] == 12
             names = {tool.name for tool in context.tools}
             assert len(names) == 13
+            lookup = next(tool for tool in context.tools if tool.name == "comfyui_lookup")
+            assert lookup.store is plugin._store
+            assert "recipe" in lookup.parameters["properties"]["type"]["enum"]
+            assert "已保存配方" in await lookup.call(None, type="recipe")
             assert not names & {
                 "comfyui_run_workflow", "comfyui_generate", "comfyui_interrupt",
                 "comfyui_queue", "comfyui_fetch_outputs", "comfyui_list_models",

@@ -17,6 +17,7 @@ from astrbot.api.event import MessageChain
 from ..clients.comfyui import execution_error_message
 from ..storage.images import save_image
 from .receipts import INTERNAL_ID_NOTICE, hide_task_ids, task_reference
+from .notices import completion_prompt, completion_summary
 
 if TYPE_CHECKING:
     from astrbot.api.provider import LLMResponse
@@ -545,7 +546,7 @@ class GenerationQueue:
         )
         system = (persona or {}).get("prompt", "")
         # 临时通知指令放在末尾事件消息，保留人格与历史消息的稳定前缀。
-        prompt = "[ComfyUI 后台任务事件]\n" + summary + "\n请结合原请求自然、简短地回应；图片发送状态以本事件为准，无需再次生图或发送图片。"
+        prompt = completion_prompt(summary)
         request = ProviderRequest(
             prompt=prompt,
             session_id=job["umo"],
@@ -618,7 +619,7 @@ class GenerationQueue:
                 if job.get("note"):
                     notice += "\n" + job["note"]
                 notice = hide_task_ids(notice, [job.get("prompt_id", "")])
-                summary = notice + "\n" + task_reference(job)
+                summary = completion_summary(job, LABELS[job["state"]])
                 event = CompletionEvent(
                     job,
                     summary,
