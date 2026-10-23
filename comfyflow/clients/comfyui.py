@@ -1462,11 +1462,14 @@ class ComfyUIClient:
                 state = self.execution_progress(prompt_id)
                 if state.get("event") in {"execution_error", "execution_interrupted"}:
                     return {"status": {"status_str": "error", "messages": [[state["event"], state]]}, "outputs": {}}, None
+                request_budget = min(self.request_timeout, remaining)
+                request_timed_out = False
                 try:
                     if events is None:
-                        entry = await asyncio.wait_for(self.get_history_entry(prompt_id), remaining)
+                        entry = await asyncio.wait_for(self.get_history_entry(prompt_id), request_budget)
                     else:
-                        request = asyncio.create_task(self.get_history_entry(prompt_id))
+                        # 限制整轮查询（含 HTTP 重试），避免旧请求耗尽任务等待窗口。
+                        request = asyncio.create_task(asyncio.wait_for(self.get_history_entry(prompt_id), request_budget))
                         signal = asyncio.create_task(events.wait(prompt_id, remaining))
                         try:
                             done, _ = await asyncio.wait({request, signal}, timeout=remaining, return_when=asyncio.FIRST_COMPLETED)
@@ -1482,13 +1485,15 @@ class ComfyUIClient:
                                     task.cancel()
                             await asyncio.gather(request, signal, return_exceptions=True)
                 except TimeoutError:
-                    break
+                    entry = None
+                    request_timed_out = True
+                    state = self.execution_progress(prompt_id)
                 if entry is not None:
                     return entry, None
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
-                interval = min(0.2 if state.get("event") == "execution_success" else 2.0, remaining)
+                interval = min(0.2 if request_timed_out or state.get("event") == "execution_success" else 2.0, remaining)
                 if events is not None:
                     await events.wait(prompt_id, interval)
                 else:

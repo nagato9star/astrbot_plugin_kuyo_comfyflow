@@ -8,6 +8,7 @@ import json
 import tempfile
 import time
 import types
+from collections import OrderedDict
 from pathlib import Path
 
 import httpx
@@ -16,6 +17,7 @@ from aiohttp import web
 import smoke_test  # noqa: F401 - the shared AstrBot test environment
 from comfyflow.studio import api as webapi
 from comfyflow.clients.comfyui import ComfyUIClient
+from comfyflow.clients.events import ExecutionEvents
 from comfyflow.workflows.parameters import fill_trigger_words
 from comfyflow.workflows.registry import ModelFamilyRegistry, WorkflowProfileStore
 from comfyflow.storage.recipes import RecipeStore
@@ -102,6 +104,87 @@ async def submission_and_timeout():
     await client.close()
 
 
+async def bounded_history_requests():
+    for events_enabled in (False, True):
+        for failure in ("blocked", "retry"):
+            calls = []
+            cancelled = []
+
+            async def handler(request):
+                calls.append(request.url.path)
+                if len(calls) == 1:
+                    if failure == "retry":
+                        raise httpx.ReadTimeout("history response lost", request=request)
+                    try:
+                        await asyncio.Event().wait()
+                    except asyncio.CancelledError:
+                        cancelled.append(True)
+                        raise
+                return httpx.Response(200, json={
+                    "pid": {"status": {"status_str": "success"}, "outputs": {}}
+                })
+
+            client = QuietClient("test", 8188, timeout=0.8, request_timeout=0.1,
+                                 events_enabled=events_enabled)
+            client._client = httpx.AsyncClient(
+                base_url=client.base_url, transport=httpx.MockTransport(handler)
+            )
+            finished = None
+            if events_enabled:
+                # 直接投递真实事件分发器，隔离网络抖动与 WebSocket 连接建立时间。
+                events = ExecutionEvents.__new__(ExecutionEvents)
+                events.states = OrderedDict()
+                events.signals = {}
+                events.task = asyncio.create_task(asyncio.Event().wait())
+                client._events = events
+
+                async def finish():
+                    await asyncio.sleep(0.02)
+                    events.handle({"type": "execution_success", "data": {"prompt_id": "pid"}})
+
+                finished = asyncio.create_task(finish())
+            try:
+                started = time.monotonic()
+                entry, error = await client.wait_for_history("pid")
+                assert entry is not None and error is None, (events_enabled, failure, error)
+                assert len(calls) == 2 and time.monotonic() - started < 0.7
+                assert bool(cancelled) == (failure == "blocked")
+                if events_enabled:
+                    assert "pid" not in events.signals
+            finally:
+                if finished:
+                    await finished
+                await client.close()
+
+    active = set()
+
+    class StalledClient(QuietClient):
+        async def get_history_entry(self, pid):
+            active.add(pid)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                active.discard(pid)
+
+    client = StalledClient("127.0.0.1", 1, timeout=0.25,
+                           request_timeout=0.1, events_enabled=True)
+    try:
+        started = time.monotonic()
+        entry, error = await client.wait_for_history("deadline")
+        assert entry is None and "等待超时" in error
+        assert time.monotonic() - started < 0.6 and not active
+        assert "deadline" not in client._events.signals
+        waiting = asyncio.create_task(client.wait_for_history("cancelled", timeout=10))
+        while "cancelled" not in active:
+            await asyncio.sleep(0)
+        waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+        assert waiting.cancelled() and not active
+        assert "cancelled" not in client._events.signals
+    finally:
+        await client.close()
+
+
 async def event_wakeup_and_fallback():
     ready = asyncio.Event()
     sockets = []
@@ -160,6 +243,21 @@ async def event_wakeup_and_fallback():
         assert entry and error is None and time.monotonic() - start < 1
         await finished
         assert reads.count("event-job") == 2
+
+        async def delayed_history():
+            await asyncio.sleep(0.02)
+            await sockets[0][1].send_json(
+                {"type": "execution_success", "data": {"prompt_id": "delayed-history"}}
+            )
+            await asyncio.sleep(0.35)
+            histories["delayed-history"] = {"status": {"status_str": "success"}, "outputs": {}}
+
+        finished = asyncio.create_task(delayed_history())
+        started = time.monotonic()
+        entry, error = await client.wait_for_history("delayed-history")
+        assert entry is not None and error is None and time.monotonic() - started < 1
+        assert 3 <= reads.count("delayed-history") <= 6
+        await finished
         await sockets[0][1].send_json(
             {
                 "type": "execution_error",
@@ -484,6 +582,7 @@ async def trigger_and_snapshot(root):
 
 async def main():
     await submission_and_timeout()
+    await bounded_history_requests()
     await event_wakeup_and_fallback()
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
