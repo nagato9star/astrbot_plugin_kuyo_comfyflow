@@ -196,6 +196,7 @@ class Context(BaseContext):
 class Client(ComfyUIClient):
     def __init__(self):
         self.timeout = 0.04
+        self.request_timeout = 0.1
         self.submissions, self.downloads = [], []
         self.finished = asyncio.Event()
         self.fail = False
@@ -485,6 +486,54 @@ async def failures_and_cancellation(root):
     await queue.close()
 
 
+async def missing_backend_jobs(root):
+    class ReconcileClient(Client):
+        def __init__(self, scenario):
+            super().__init__()
+            self.scenario = scenario
+            self.queue_checks = 0
+
+        async def wait_for_history(self, pid, timeout=None):
+            self.waits += 1
+            if pid == "pid-1":
+                if self.scenario == "missing" or self.queue_checks < 2:
+                    return None, "等待超时，任务可能仍在执行"
+                if self.scenario == "late-error":
+                    return {"status": {"status_str": "error", "messages": [
+                        ["execution_error", {"exception_message": "real GPU failure"}]
+                    ]}}, None
+            self.finished.set()
+            return await super().wait_for_history(pid, timeout)
+
+        async def get_queue(self):
+            self.queue_checks += 1
+            if self.scenario == "unreachable":
+                return None
+            if self.scenario == "stalled-queue":
+                await asyncio.Event().wait()
+            return {
+                "queue_pending": [[1, "pid-1"]] if self.scenario == "pending" else [],
+                "queue_running": [[1, "pid-1"]] if self.scenario == "running" else [],
+            }
+
+    for scenario in ("missing", "delayed", "late-error", "running", "pending", "unreachable", "stalled-queue"):
+        client = ReconcileClient(scenario)
+        queue, context, _, _ = make_queue(root / scenario, client=client, notify_llm=False)
+        await queue.enqueue({}, event())
+        await queue.enqueue({}, event())
+        await until(lambda: queue.jobs["C000002"]["state"] == "completed")
+        first = queue.jobs["C000001"]
+        assert len(client.submissions) == 2 and first["prompt_id"] == "pid-1"
+        if scenario == "missing":
+            assert first["state"] == "failed" and "结果回收失败" in first["error"]
+            assert client.queue_checks == 2
+        elif scenario == "late-error":
+            assert first["state"] == "failed" and "real GPU failure" in first["error"]
+        else:
+            assert first["state"] == "completed", (scenario, first)
+        await queue.close()
+
+
 async def slow_notice_and_wait_timeout(root):
     queue, context, client, _ = make_queue(root)
     context.llm_gate = asyncio.Event()
@@ -656,6 +705,7 @@ async def main():
             await async_receipt_and_delivery(root / "delivery")
             await restart_and_ambiguity(root / "recovery")
             await failures_and_cancellation(root / "failures")
+            await missing_backend_jobs(root / "missing-backend")
             await slow_notice_and_wait_timeout(root / "slow-notice")
             await entrypoints(root / "entrypoints")
         finally:

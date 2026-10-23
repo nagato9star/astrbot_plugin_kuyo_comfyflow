@@ -409,12 +409,50 @@ class GenerationQueue:
             self.shared.setdefault("last_prompt_ids", {})[job["umo"]] = pid
         pid = job["prompt_id"]
         if job["state"] != "downloading":
+            missing_checks = 0
             while True:
                 entry, error = await self.client.wait_for_history(
                     pid, timeout=min(30, self.client.timeout)
                 )
                 if job["state"] == "cancelled":
                     return
+                if entry is None:
+                    if error and not error.startswith("等待超时"):
+                        raise RuntimeError(error)
+                    try:
+                        backend_queue = await asyncio.wait_for(
+                            self.client.get_queue(), self.client.request_timeout
+                        )
+                    except TimeoutError:
+                        backend_queue = None
+                    if isinstance(backend_queue, dict) and all(
+                        key in backend_queue for key in ("queue_running", "queue_pending")
+                    ):
+                        backend_ids = {
+                            str(item[1])
+                            for key in ("queue_running", "queue_pending")
+                            for item in backend_queue[key]
+                            if isinstance(item, (list, tuple)) and len(item) > 1
+                        }
+                        missing_checks = 0 if pid in backend_ids else missing_checks + 1
+                    else:
+                        # 无法查询后端时不把网络故障当作任务已消失。
+                        missing_checks = 0
+                    if missing_checks >= 2:
+                        # 队列快照之后再查历史，覆盖任务刚完成、历史稍晚可见的窗口。
+                        entry, error = await self.client.wait_for_history(
+                            pid, timeout=min(2, self.client.timeout)
+                        )
+                        if job["state"] == "cancelled":
+                            return
+                        if entry is None:
+                            if error and not error.startswith("等待超时"):
+                                raise RuntimeError(error)
+                            raise RuntimeError(
+                                "结果回收失败：连续两轮确认 ComfyUI 队列已无此任务，"
+                                "复查后仍未取得历史结果。服务端可能已重启、任务被移除或历史被清理；"
+                                "已保留原任务编号，可继续查询，未自动重新提交。"
+                            )
                 if entry is not None:
                     status = entry.get("status") or {}
                     if status.get("status_str") == "error":
@@ -443,9 +481,7 @@ class GenerationQueue:
                         job, state="downloading", images=finals or images
                     )
                     break
-                # A wait timeout does not mean the GPU job failed. Continue with its original ID.
-                if error and not error.startswith("等待超时"):
-                    raise RuntimeError(error)
+                # 后端仍在排队、执行或暂时不可达时，继续跟踪原任务。
                 await asyncio.sleep(1)
         for image in job["images"][len(job["paths"]) :]:
             filename = str(image.get("filename") or "")
