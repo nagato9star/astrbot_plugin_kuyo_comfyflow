@@ -106,6 +106,9 @@ def _needs_control_after_generate(field_type, class_type: str = "", field: str =
 def _is_widget_spec(field_type) -> bool:
     if not isinstance(field_type, list) or not field_type:
         return False
+    # 强制连线输入没有控件，不能占用 widgets_values 的位置。
+    if len(field_type) > 1 and isinstance(field_type[1], dict) and field_type[1].get("forceInput"):
+        return False
     head = field_type[0]
     if isinstance(head, list):
         return True

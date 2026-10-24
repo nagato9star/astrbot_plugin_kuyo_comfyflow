@@ -496,6 +496,9 @@ def _widget_input_names(cls: str, object_info: dict | None) -> list[str]:
 def _is_widget_spec(typ: Any) -> bool:
     if not isinstance(typ, list) or not typ:
         return False
+    # 强制连线输入没有控件，不能占用 widgets_values 的位置。
+    if len(typ) > 1 and isinstance(typ[1], dict) and typ[1].get("forceInput"):
+        return False
     head = typ[0]
     if isinstance(head, list):
         return True
