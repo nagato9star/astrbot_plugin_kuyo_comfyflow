@@ -124,7 +124,7 @@ def parse_default_lora(raw: Any) -> str:
     "astrbot_plugin_kuyo_comfyflow",
     "长门九曜",
     "局域网直连ComfyUI API，按模型家族路由工作流并支持快捷配方",
-    "2.8.1",
+    "2.9.0",
 )
 class ComfyUIDirectPlugin(Star):
     """通过局域网直连ComfyUI API生成图片和查询模型。"""

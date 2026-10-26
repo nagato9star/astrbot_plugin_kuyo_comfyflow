@@ -15,9 +15,9 @@ MOSS-Image 同时支持三种输入：自然语言、Danbooru 风格 tag 串、J
 
 按“看得见的东西”组织，可参考顺序：主体与动作 → 外观细节 → 场景与环境 → 物体之间的空间关系 → 构图与镜头 → 光线与材质 → 风格与媒介 → 需要呈现的文字。
 
-- 保留用户给出的数量、颜色、位置、材质、媒介和排除项。已经具体的请求只做轻度整理。
-- **避免过度堆砌器官细节**：MOSS等大模型注意力极度集中，如果连续强调`tongue`、`licking`等局部细节词，会导致局部器官畸形膨胀或多长异形（如怪异大舌头）。应当用克制的人体生理结构与常规动作词描述。
-- **动漫脸与写实感控制**：MOSS在处理二次元插画时容易出现油腻的半写实/3D渲染感。如果需要纯正动漫二次元画风，明确指定`2D anime cel-shaded style, flat color, clean lineart`，并在负向提示词中加入`3d, realistic, semi-realistic, photorealistic`。
+- 保留用户给出的数量、颜色、位置、材质、媒介和排除项。已经具体的请求只做轻度整理；用户没提的背景事件、招牌标语、水印不要自行补上。
+- **避免过度堆砌器官细节**：MOSS等大模型注意力极度集中，如果连续强调`tongue`、`licking`、`deep throat`这类局部细节词，会导致局部器官畸形膨胀或多长异形（如怪异大舌头）。动作与生理结构克制写，用常规的人体结构与动作词描述。
+- **动漫脸与写实感控制**：MOSS在处理二次元插画时容易出现油腻的半写实/3D渲染感。如果需要纯正动漫二次元画风，明确指定`2D anime cel-shaded style, flat color, clean lineart`，并在负向提示词中加入`3d, render, cgi, realistic, semi-realistic, photorealistic`；只改开头一个画风词、正文仍留着毛孔与硬直闪这类写实细节，压不住画风（见分章 §3 的成套替换）。
 - 空间关系用明确方位词写：“冰箱在料理台左侧，台面上有一个水果盘”。模型对文字化的空间关系响应良好，这是它的强项之一。
 - 光线写到来源、方向、软硬；材质写到反光质感，避免只写“电影感”“高级感”这类空词。
 
@@ -34,7 +34,7 @@ MOSS-Image 同时支持三种输入：自然语言、Danbooru 风格 tag 串、J
 
 这是模型的主要卖点，值得认真写。
 
-- 需要出现的文案用引号原样括起，保留原文语言、标点、大小写和数字。不要改写、翻译或“顺便润色”。
+- 需要出现的文案用英文双引号原样括起（如 `"EXPLORE"`、`"老街早餐"`），保留原文语言、标点、大小写和数字。不要改写、翻译或“顺便润色”。
 - 精确换行直接写进提示词：要么真实换行，要么写 `\n`。不写换行时模型会自己排版，结果不一定符合预期。
 - 需要多块文字各自定位时，才考虑 Layout；只是“画面上有一句话”用普通自然语言就够。
 - 用户没要求文字时，不要自行加招牌、水印、标语。
@@ -73,4 +73,4 @@ MOSS-Image 同时支持三种输入：自然语言、Danbooru 风格 tag 串、J
 - 官方 [USERGUIDE](https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE.md)（[中文版](https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE_ZH.md)）：推理参数、Prompt 规范、tag 顺序、文字换行、Layout JSON 字段与负向标签。
 - [MOSS-Image-SFT 模型卡](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)：Base/SFT 差异、默认采样设置、文本编码上限 4096 token。
 - [ComfyUI 说明](https://github.com/OpenMOSS/MOSS-Image/blob/main/comfyui/README.md)：节点、SLG 配置、ModelSamplingSD3 与 shift 的关系。
-- 官方 [Prompt Enhancer skill](https://github.com/OpenMOSS/MOSS-Image/blob/main/skills/moss-image-prompt-enhancer/SKILL.md)：caption / Layout 的取舍、文字原文保留、Layout 草稿坐标转换。该 skill 面向文件系统和脚本工具，输出 `{"caption":"..."}` 之类的包装；本插件只接收提示词字符串，因此只采用其中关于描述取舍和坐标的写法，不照搬其文件与 JSON 包装流程。
+- 官方 [Prompt Enhancer skill](https://github.com/OpenMOSS/MOSS-Image/blob/main/skills/moss-image-prompt-enhancer/SKILL.md)：caption / Layout 的取舍、文字原文保留、Layout 草稿坐标转换。该 skill 面向文件系统和脚本工具，输出 `{"caption":"..."}` 之类的包装；本插件只接收提示词字符串，因此只采用其中关于描述取舍和坐标的写法，不照搬其文件与 JSON 包装流程。原先单独维护的 `moss-image-prompter` skill 已并入本文件，内容重复的部分不再另立文档。
