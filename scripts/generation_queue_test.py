@@ -41,12 +41,19 @@ if not hasattr(AstrMessageEvent, "make_result"):
         def __init__(self, job, summary, config, send, original=None):
             self.send = send
             self.config = config
+            self.extras = {}
 
-        def set_extra(self, *args):
-            pass
+        def set_extra(self, key, value):
+            self.extras[key] = value
+
+        def get_extra(self, key):
+            return self.extras.get(key)
 
         def is_stopped(self):
             return False
+
+        def cleanup_temporary_local_files(self):
+            pass
 
     async def call_event_hook(*args):
         return False
@@ -72,6 +79,7 @@ from astrbot.api.provider import LLMResponse  # noqa: E402
 from comfyflow.generation import queue as generation_queue
 from comfyflow.clients.comfyui import ComfyUIClient
 from comfyflow.generation.queue import GenerationQueue
+from comfyflow.generation.notices import SUCCESS_NOTICES, fallback_notice
 from comfyflow.workflows.registry import (
     EditWorkflowRegistry,
     ModelFamilyRegistry,
@@ -421,6 +429,8 @@ async def failures_and_cancellation(root):
         "download",
         "platform",
         "branch",
+        "deleted",
+        "missing-conversation",
         "cancel",
     ):
         queue, context, client, _ = make_queue(root / scenario)
@@ -439,6 +449,10 @@ async def failures_and_cancellation(root):
             context.send_error = True
         elif scenario == "branch":
             context.conversation_manager.current[event().unified_msg_origin] = "new-cid"
+        elif scenario == "deleted":
+            context.conversation_manager.current.pop(event().unified_msg_origin)
+        elif scenario == "missing-conversation":
+            context.conversation_manager.history.pop("cid-A")
         elif scenario == "cancel":
             client.pending_backend = True
             await until(lambda: queue.jobs["C000001"]["state"] == "running")
@@ -451,7 +465,7 @@ async def failures_and_cancellation(root):
         job = queue.jobs["C000001"]
         if scenario in {"llm", "llm-timeout"}:
             assert job["state"] == "completed" and "llm_error" in job
-            assert "生图任务已完成" in context.sent[-1][1][0][1]
+            assert context.sent[-1][1][0][1] in SUCCESS_NOTICES
             assert "C000001" not in context.sent[-1][1][0][1]
             assert "本地路径" not in context.sent[-1][1][0][1]
             if scenario == "llm-timeout":
@@ -466,7 +480,7 @@ async def failures_and_cancellation(root):
             )
         elif scenario == "platform":
             assert job["state"] == "completed" and job["delivery_state"] == "failed"
-        elif scenario == "branch":
+        elif scenario in {"branch", "deleted", "missing-conversation"}:
             assert not context.requests and not context.conversation_manager.pairs
         elif scenario == "cancel":
             assert job["state"] == "cancelled" and not client.downloads
@@ -484,6 +498,62 @@ async def failures_and_cancellation(root):
         queue.jobs["C000001"]["state"] == "uncertain" and len(client.submissions) == 1
     )
     await queue.close()
+
+
+async def group_notification_context(root):
+    for scenario in ("no-conversation", "new-current", "selected-provider", "restored-provider"):
+        queue, context, client, _ = make_queue(root / scenario)
+        origin = event()
+        if scenario in {"no-conversation", "new-current"}:
+            context.conversation_manager.current.pop(origin.unified_msg_origin)
+        else:
+            origin.get_extra = lambda key: "group-provider" if key == "selected_provider" else None
+
+            async def missing_default(umo):
+                raise RuntimeError("default provider unavailable")
+
+            context.get_current_chat_provider_id = missing_default
+        await queue.enqueue({}, origin, history={"prompt": "cat"})
+        await until(lambda: len(client.submissions) == 1)
+        if scenario == "new-current":
+            context.conversation_manager.current[origin.unified_msg_origin] = "cid-B"
+        if scenario == "restored-provider":
+            queue.events.clear()
+        client.finished.set()
+        await until(lambda: queue.jobs["C000001"]["delivery_state"] == "sent")
+        assert len(context.requests) == 1, (scenario, queue.jobs["C000001"])
+        request = context.requests[0]
+        assert request["system_prompt"] == "friendly persona"
+        assert "生成指令：cat" in request["prompt"]
+        if scenario in {"no-conversation", "new-current"}:
+            assert request["contexts"] == []
+            assert not context.conversation_manager.pairs
+        else:
+            assert request["chat_provider_id"] == "group-provider"
+        assert context.sent[-1][1] == [("text", "Your image is ready!")]
+        await queue.close()
+    print("group notifications without conversation / isolated new history / selected provider / restored provider OK")
+
+
+def fallback_notices():
+    completed = {"state": "completed", "paths": ["one.png"], "images_sent": 1}
+    for phrase in SUCCESS_NOTICES:
+        with patch("comfyflow.generation.notices.random.choice", return_value=phrase) as choose:
+            assert fallback_notice(completed, "已完成") == phrase
+            choose.assert_called_once_with(SUCCESS_NOTICES)
+    with patch("comfyflow.generation.notices.random.choice") as choose:
+        for state, label in (("failed", "失败"), ("cancelled", "已取消"), ("uncertain", "提交结果待确认")):
+            job = {**completed, "state": state, "error": "未能完成，prompt_id=pid-1", "prompt_id": "pid-1"}
+            notice = fallback_notice(job, label)
+            assert f"生图任务{label}" in notice and "未能完成" in notice and "pid-1" not in notice
+        assert "图片已发送，共 1 张" in fallback_notice({**completed, "paths": ["one.png", "two.png"]}, "已完成")
+        assert "图片已发送" not in fallback_notice({**completed, "paths": [], "images_sent": 0}, "已完成")
+        assert "异常" in fallback_notice({**completed, "error": "异常"}, "已完成")
+        choose.assert_not_called()
+    with patch("comfyflow.generation.notices.random.choice", return_value=SUCCESS_NOTICES[0]):
+        notice = fallback_notice({**completed, "note": "已保存快捷配方。"}, "已完成")
+        assert notice == SUCCESS_NOTICES[0] + "\n已保存快捷配方。"
+    print("random success notices / failure and partial delivery facts / notes and internal ID cleanup OK")
 
 
 async def missing_backend_jobs(root):
@@ -701,10 +771,12 @@ async def main():
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         try:
+            fallback_notices()
             await workflow_loading(root / "loading")
             await async_receipt_and_delivery(root / "delivery")
             await restart_and_ambiguity(root / "recovery")
             await failures_and_cancellation(root / "failures")
+            await group_notification_context(root / "group-notification")
             await missing_backend_jobs(root / "missing-backend")
             await slow_notice_and_wait_timeout(root / "slow-notice")
             await entrypoints(root / "entrypoints")

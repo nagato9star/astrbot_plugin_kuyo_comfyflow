@@ -128,6 +128,19 @@ class CompletionEvent(AstrMessageEvent):
             self.sent_texts.append(text)
 
 
+def prepare_completion_result(event, response) -> None:
+    """在响应 hook 前建立结果，供清理插件替换或清空。"""
+    result = event.make_result()
+    if response.result_chain:
+        result.chain = copy.deepcopy(response.result_chain.chain)
+        result.use_t2i_ = response.result_chain.use_t2i_
+        result.use_markdown_ = response.result_chain.use_markdown_
+        result.type = response.result_chain.type
+    else:
+        result.message(response.completion_text or "")
+    event.set_result(result.set_result_content_type(ResultContentType.LLM_RESULT))
+
+
 async def send_completion_reply(
     context: Context,
     event: CompletionEvent,
@@ -138,19 +151,10 @@ async def send_completion_reply(
     """Apply reply processing and return the text actually delivered to the user."""
     try:
         if response is not None and not event.is_stopped():
-            result = event.make_result()
-            if response.result_chain:
-                result.chain = copy.deepcopy(response.result_chain.chain)
-                result.use_t2i_ = response.result_chain.use_t2i_
-                result.use_markdown_ = response.result_chain.use_markdown_
-                result.type = response.result_chain.type
-            else:
-                result.message(response.completion_text or "")
-            # Fallback replies also need LLM-only cleanup and segmentation.
-            event.set_result(
-                result.set_result_content_type(ResultContentType.LLM_RESULT)
-            )
-            if from_llm:
+            native = from_llm and event.get_extra("comfyui_native_completion")
+            if not native:
+                prepare_completion_result(event, response)
+            if from_llm and not native:
                 await finish_completion(event, response)
             if event.is_stopped():
                 if event.send_error:

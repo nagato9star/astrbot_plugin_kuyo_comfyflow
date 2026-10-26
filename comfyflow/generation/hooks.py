@@ -56,7 +56,7 @@ async def begin_completion(context, event, request) -> bool:
     return False
 
 
-async def finish_completion(event, response) -> None:
+async def finish_completion(event, response, *, run_context=None) -> None:
     """按正常 Agent 顺序触发响应与结束 hook，并保留事件结果的直接修改。"""
     result = event.get_result()
     previous = copy.deepcopy(result.chain) if result is not None else None
@@ -65,15 +65,20 @@ async def finish_completion(event, response) -> None:
         event.set_extra("_llm_reasoning_content", response.reasoning_content)
     event.set_extra("llm_response", response)
     await call_event_hook(event, EventType.OnLLMResponseEvent, response)
-    run_context = event.get_extra("comfyui_agent_context")
+    native_context = run_context is not None
+    run_context = run_context or event.get_extra("comfyui_agent_context")
     if run_context is not None:
         from astrbot.core.agent.message import Message
 
         original_text = response.completion_text or ""
-        message = Message(role="assistant", content=original_text)
-        run_context.messages.append(message)
+        if native_context:
+            message = run_context.messages[-1]
+        else:
+            message = Message(role="assistant", content=original_text)
+            run_context.messages.append(message)
+        previous_message = _text(message.content)
         await call_event_hook(event, EventType.OnAgentDoneEvent, run_context, response)
-        if response.completion_text == original_text and _text(message.content) != original_text:
+        if response.completion_text == original_text and _text(message.content) != previous_message:
             response.completion_text = _text(message.content)
     # 只在插件没有直接替换、清空或修改结果时，同步响应对象的变化。
     if result is not None and event.get_result() is result:

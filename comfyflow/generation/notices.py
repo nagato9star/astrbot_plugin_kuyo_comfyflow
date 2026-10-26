@@ -1,6 +1,35 @@
 """为完成回复提供任务事实和对话指引，避免模型照读兜底播报。"""
 
+import random
+
 from .receipts import hide_task_ids, task_reference
+
+
+SUCCESS_NOTICES = (
+    "画好了，图来了。",
+    "图来了，看看？",
+    "画好了，看看怎么样？",
+    "来，看看这次画的怎么样。",
+    "出图了，看看吧。",
+    "图片好了，发过来了。",
+    "画完了，给你看看。",
+    "来啦，看看合不合心意。",
+)
+
+
+def fallback_notice(job: dict, state_label: str) -> str:
+    """成功交付随机接话，异常与补充信息按实际结果保留。"""
+    paths = job["paths"]
+    if job["state"] == "completed" and paths and job["images_sent"] == len(paths) and not job.get("error"):
+        notice = random.choice(SUCCESS_NOTICES)
+    else:
+        notice = f"生图任务{state_label}。"
+        if job["images_sent"]:
+            notice += f"图片已发送，共 {job['images_sent']} 张。"
+    for key in ("error", "note"):
+        if job.get(key):
+            notice += "\n" + job[key]
+    return hide_task_ids(notice, [job.get("prompt_id", "")])
 
 
 def completion_summary(job: dict, state_label: str) -> str:

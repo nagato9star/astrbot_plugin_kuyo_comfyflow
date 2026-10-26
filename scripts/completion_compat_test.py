@@ -113,8 +113,13 @@ async def run(root, outputpro):
     async def request(event, req):
         seen.append("request")
         assert req is event.get_extra("provider_request")
-        assert req.contexts == json.loads(req.conversation.history)
+        if scenario == "no_conversation":
+            assert req.conversation is None and req.contexts == []
+        else:
+            assert req.contexts == json.loads(req.conversation.history)
         assert req.system_prompt == "friendly persona"
+        if scenario == "selected_provider_hook":
+            event.set_extra("selected_provider", "hook-provider")
 
     async def begin(event, run_context):
         seen.append("begin")
@@ -149,7 +154,8 @@ async def run(root, outputpro):
         assert run_context.messages[-1].role == "assistant"
         event.set_extra("comfyui_include_task_ids", True)
         if scenario in {"agent_clean", "agent_history", "native", "restored", "response_format",
-                        "agent_format", "event_format", "event_chain_format"}:
+                        "agent_format", "event_format", "event_chain_format",
+                        "no_conversation", "selected_provider_hook"}:
             reply.completion_text = "Agent 结束阶段清理后的回复"
         elif scenario == "agent_messages":
             assert "[begin修改]" in context.requests[-1]["prompt"]
@@ -206,13 +212,16 @@ async def run(root, outputpro):
             ))
         scenarios = ["agent_clean", "agent_messages", "agent_history", "response_clear", "response_replace", "agent_clear",
                      "handled", "handled_context", "native", "restored", "waiting_stop", "begin_stop",
-                     "response_format", "agent_format", "event_chain_format", "event_format"]
+                     "response_format", "agent_format", "event_chain_format", "event_format",
+                     "no_conversation", "selected_provider_hook"]
         if real_cleaner is not None:
             scenarios.extend(["outputpro", "outputpro_actual_timeout"])
         for scenario in scenarios:
             seen.clear()
             notification_logger.reset_mock()
             context, origin = Context(), NativeEvent()
+            if scenario == "no_conversation":
+                context.conversation_manager.current.pop(origin.unified_msg_origin)
             if scenario == "outputpro":
                 origin.message_obj.timestamp = int(time.time()) - 600
             original_result = origin.get_result()
@@ -254,13 +263,17 @@ async def run(root, outputpro):
                     assert "task_id=C000001" in prompt and "prompt_id=pid-1" in prompt
                     assert "生成指令：Manhattan Cafe at sunset" in prompt and "配方：Anima" in prompt
                     assert "原请求：draw a cat" in prompt
-                    if scenario == "agent_history":
+                    if scenario == "no_conversation":
+                        assert context.requests[-1]["contexts"] == []
+                    elif scenario == "agent_history":
                         assert context.requests[-1]["contexts"][-3:-1] == old_messages[:-1]
                         assert context.requests[-1]["contexts"][-1]["content"] == "旧回复[历史修改]"
                     else:
                         assert context.requests[-1]["contexts"][-3:] == old_messages
                     assert any("C000001 触发完成通知 LLM" in item for item in log_messages)
                     assert any("C000001 完成通知 LLM 返回" in item for item in log_messages)
+                    if scenario == "selected_provider_hook":
+                        assert context.requests[-1]["chat_provider_id"] == "hook-provider"
                 else:
                     assert any("C000001 完成通知 LLM 跳过" in item for item in log_messages)
                     assert not any("触发完成通知 LLM" in item for item in log_messages)
@@ -286,7 +299,9 @@ async def run(root, outputpro):
                     assert "after" in seen
                 else:
                     assert texts == ["Agent 结束阶段清理后的回复"], texts
-                if texts:
+                if scenario == "no_conversation":
+                    assert not context.conversation_manager.pairs
+                elif texts:
                     assert context.conversation_manager.pairs[-1][2]["content"] == "\n".join(texts)
                 job_tool = ComfyuiJobTool(client=client, shared=shared)
                 wrapped = type("Wrapper", (), {"context": type("Inner", (), {"event": origin})()})()
@@ -354,6 +369,9 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as directory:
         try:
             os.chdir(directory)
-            asyncio.run(run(Path(directory), args.outputpro))
+            import astrbot.api  # noqa: F401
+            # 旧 SDK 路径的完整 hook 兼容性单独保留。
+            with patch("comfyflow.generation.agent.native_api", return_value=None):
+                asyncio.run(run(Path(directory), args.outputpro))
         finally:
             os.chdir(cwd)

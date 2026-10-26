@@ -17,7 +17,7 @@ from astrbot.api.event import MessageChain
 from ..clients.comfyui import execution_error_message
 from ..storage.images import save_image
 from .receipts import INTERNAL_ID_NOTICE, hide_task_ids, task_reference
-from .notices import completion_prompt, completion_summary
+from .notices import completion_prompt, completion_summary, fallback_notice
 
 if TYPE_CHECKING:
     from astrbot.api.provider import LLMResponse
@@ -193,6 +193,7 @@ class GenerationQueue:
             return "加入队列失败：无法确定原会话。"
         manager = self.context.conversation_manager
         cid = await manager.get_curr_conversation_id(umo)
+        selected_provider = event.get_extra("selected_provider") if hasattr(event, "get_extra") else None
         async with self.mutation_lock:
             if self.closed:
                 return "加入队列失败：插件正在卸载。"
@@ -212,6 +213,7 @@ class GenerationQueue:
                 "state": "queued",
                 "umo": umo,
                 "cid": cid,
+                "selected_provider": selected_provider if isinstance(selected_provider, str) else "",
                 "workflow": copy.deepcopy(workflow),
                 "history": copy.deepcopy(history or {}),
                 "saved_recipe": copy.deepcopy(saved_recipe),
@@ -555,6 +557,7 @@ class GenerationQueue:
     ) -> LLMResponse | None:
         from astrbot.api.provider import ProviderRequest
         from .hooks import begin_completion
+        from .agent import native_api, wake_completion
         from astrbot.core.pipeline.context import call_event_hook
         from astrbot.core.star.star_handler import EventType
 
@@ -563,12 +566,12 @@ class GenerationQueue:
             return None
         manager = self.context.conversation_manager
         cid = job.get("cid")
-        if not cid or await manager.get_curr_conversation_id(job["umo"]) != cid:
-            # A new/deleted conversation must not inherit an old job's history.
+        if cid and await manager.get_curr_conversation_id(job["umo"]) != cid:
+            # 原对话切换或删除后，不读取其他对话的历史。
             logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：原对话已切换或不存在。")
             return None
-        conversation = await manager.get_conversation(job["umo"], cid)
-        if conversation is None:
+        conversation = await manager.get_conversation(job["umo"], cid) if cid else None
+        if cid and conversation is None:
             logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：原对话已删除。")
             return None
         config = event.config
@@ -576,7 +579,7 @@ class GenerationQueue:
         persona_manager = self.context.persona_manager
         _, persona, _, _ = await persona_manager.resolve_selected_persona(
             umo=job["umo"],
-            conversation_persona_id=conversation.persona_id,
+            conversation_persona_id=conversation.persona_id if conversation else None,
             platform_name=job.get("platform_name", job["umo"].split(":", 1)[0]),
             provider_settings=settings,
         )
@@ -586,7 +589,8 @@ class GenerationQueue:
         request = ProviderRequest(
             prompt=prompt,
             session_id=job["umo"],
-            contexts=json.loads(conversation.history),
+            # 无对话记录的群聊仍使用原请求与本会话人格，不借用后来创建的对话。
+            contexts=json.loads(conversation.history) if conversation else [],
             system_prompt=system,
             conversation=conversation,
         )
@@ -595,6 +599,17 @@ class GenerationQueue:
         if waiting is not None and await call_event_hook(event, waiting):
             logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：等待请求 hook 拦截。")
             return None
+        if native_api() is not None:
+            provider_id = event.get_extra("selected_provider") or job.get("selected_provider")
+            if not isinstance(provider_id, str) or not provider_id:
+                provider_id = await self.context.get_current_chat_provider_id(job["umo"])
+            logger.info(f"[ComfyUIDirect] 任务 {job['id']} 尝试主 Agent 完成唤醒：会话={job['umo']} 对话={cid} provider={provider_id}。")
+            started = time.monotonic()
+            native, response = await wake_completion(self.context, event, request, provider_id)
+            if native:
+                count = len(response.completion_text or "") if response else 0
+                logger.info(f"[ComfyUIDirect] 任务 {job['id']} 主 Agent 完成唤醒结束：耗时={time.monotonic() - started:.2f}s 回复={count} 字符。")
+                return response
         if await call_event_hook(event, EventType.OnLLMRequestEvent, request):
             logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知 LLM 跳过：请求 hook 拦截。")
             return None
@@ -606,7 +621,9 @@ class GenerationQueue:
             options["model"] = request.model
         if request.extra_user_content_parts:
             options["extra_user_content_parts"] = request.extra_user_content_parts
-        provider_id = await self.context.get_current_chat_provider_id(job["umo"])
+        provider_id = event.get_extra("selected_provider") or job.get("selected_provider")
+        if not isinstance(provider_id, str) or not provider_id:
+            provider_id = await self.context.get_current_chat_provider_id(job["umo"])
         logger.info(f"[ComfyUIDirect] 任务 {job['id']} 触发完成通知 LLM：prompt_id={job.get('prompt_id', '')} "
                     f"会话={job['umo']} 对话={cid} provider={provider_id} 图片={job.get('images_sent', 0)} 张。")
         started = time.monotonic()
@@ -647,14 +664,6 @@ class GenerationQueue:
                     ][0]
                 logger.info(f"[ComfyUIDirect] 任务 {job['id']} 图片发送结束：{job['images_sent']}/{len(job['paths'])} 张，"
                             f"生成状态={job['state']}。")
-                notice = f"生图任务{LABELS[job['state']]}。"
-                if job["paths"]:
-                    notice += f"图片已发送，共 {len(job['paths'])} 张。"
-                if job.get("error"):
-                    notice += "\n" + job["error"]
-                if job.get("note"):
-                    notice += "\n" + job["note"]
-                notice = hide_task_ids(notice, [job.get("prompt_id", "")])
                 summary = completion_summary(job, LABELS[job["state"]])
                 event = CompletionEvent(
                     job,
@@ -677,12 +686,19 @@ class GenerationQueue:
                         )
                         response = None
                         job["llm_error"] = detail
-                    from_llm = response is not None
-                    if response is None and not event.is_stopped():
-                        response = LLMResponse(role="assistant", completion_text=notice)
-                    text = await send_completion_reply(
-                        self.context, event, response, from_llm=from_llm
-                    )
+                    from_llm = response is not None or bool(event.get_extra("comfyui_completion_text_handled"))
+                    if response is None and not event.is_stopped() and not event.get_extra("comfyui_completion_text_handled"):
+                        response = LLMResponse(
+                            role="assistant", completion_text=fallback_notice(job, LABELS[job["state"]])
+                        )
+                    if event.get_extra("comfyui_completion_text_handled"):
+                        if event.send_error:
+                            raise event.send_error
+                        text = "\n".join(event.sent_texts)
+                    else:
+                        text = await send_completion_reply(
+                            self.context, event, response, from_llm=from_llm
+                        )
                 outcome = "文本已发送" if text else "回复已被插件处理或清空"
                 logger.info(f"[ComfyUIDirect] 任务 {job['id']} 完成通知处理结束：{outcome}，"
                             f"来源={'LLM' if from_llm else '任务结果'}，送达文本={len(text)} 字符。")
@@ -714,6 +730,7 @@ class GenerationQueue:
             await self._update(job, delivery_state="failed", delivery_error=str(error))
         finally:
             if event is not None:
+                event.cleanup_temporary_local_files()
                 self.end_turn(event)
             self.delivering.discard(job["id"])
             self.events.pop(job["id"], None)

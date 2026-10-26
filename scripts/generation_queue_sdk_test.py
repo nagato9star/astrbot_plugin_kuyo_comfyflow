@@ -383,7 +383,8 @@ async def run(root):
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     reload_names = {"image_cache": "storage.images", "completion_reply": "generation.reply",
-                    "completion_hooks": "generation.hooks", "completion_transport": "generation.transport",
+                    "completion_hooks": "generation.hooks", "completion_agent": "generation.agent",
+                    "completion_transport": "generation.transport",
                     "task_receipt": "generation.receipts", "completion_notices": "generation.notices", "output_recovery": "generation.recovery",
                     "lookup_sources": "resources.sources", "recipe_lookup": "tools.recipe_lookup"}
     prefix = package_name + ".comfyflow."
@@ -498,6 +499,9 @@ if __name__ == "__main__":
     with tempfile.TemporaryDirectory() as directory:
         try:
             os.chdir(directory)  # Keep SDK initialization files out of the checkout.
-            asyncio.run(run(Path(directory)))
+            import astrbot.api  # noqa: F401
+            # 此脚本保留旧 SDK 通知路径覆盖，原生主 Agent 由 native_completion_test 验证。
+            with patch("comfyflow.generation.agent.native_api", return_value=None):
+                asyncio.run(run(Path(directory)))
         finally:
             os.chdir(previous_directory)
