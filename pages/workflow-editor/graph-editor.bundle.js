@@ -17694,9 +17694,9 @@ var WorkflowGraphEditor = class {
     while (step < 14) step *= 2;
     ctx.save();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = "#202020";
+    ctx.fillStyle = "#1a1a1c";
     ctx.fillRect(0, 0, width2, height);
-    ctx.fillStyle = "#383838";
+    ctx.fillStyle = "#2d2d33";
     const startX = (offset[0] * scale % step + step) % step;
     const startY = (offset[1] * scale % step + step) % step;
     for (let x2 = startX; x2 < width2; x2 += step) {
