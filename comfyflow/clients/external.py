@@ -343,43 +343,82 @@ class CivitaiClient:
             await self._client.aclose()
             self._client = None
 
+    async def _get_items(self, path: str, params: dict) -> list[dict]:
+        try:
+            resp = await self.client.get(path, params={k: v for k, v in params.items() if v not in (None, "")})
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+                return (data or {}).get("items") or []
+            except ValueError as e:
+                logger.warning(f"[ComfyUIDirect] civitai 响应非 JSON（镜像可能失效）: {e}")
+                return []
+        except httpx.HTTPError as e:
+            logger.error(f"[ComfyUIDirect] civitai 请求失败 {path}: {e}")
+            return []
+
+    async def _get_one(self, path: str) -> dict | None:
+        try:
+            resp = await self.client.get(path)
+            resp.raise_for_status()
+            try:
+                data = resp.json()
+                return data if isinstance(data, dict) else None
+            except ValueError as e:
+                logger.warning(f"[ComfyUIDirect] civitai 响应非 JSON（镜像可能失效）: {e}")
+                return None
+        except httpx.HTTPError as e:
+            logger.error(f"[ComfyUIDirect] civitai 请求失败 {path}: {e}")
+            return None
+
     async def search_images(
-        self, query: str, limit: int = 5, nsfw: bool = False
+        self,
+        query: str = "",
+        limit: int = 5,
+        nsfw: bool = False,
+        sort: str = "Most Reactions",
+        period: str = "AllTime",
+        model_id: int | None = None,
+        model_version_id: int | None = None,
     ) -> list[dict]:
-        """搜索图片（按最多反应排序），返回含 meta（生成配方）的条目列表。"""
+        """搜索图片，返回含 meta（生成配方）与 modelId/modelVersionId 的条目列表。"""
         params = {
             "search": query,
             "limit": limit,
-            "sort": "Most Reactions",
+            "sort": sort,
+            "period": period,
             "nsfw": "true" if nsfw else "false",
+            "modelId": model_id,
+            "modelVersionId": model_version_id,
         }
-        try:
-            resp = await self.client.get("/api/v1/images", params=params)
-            resp.raise_for_status()
-            try:
-                data = resp.json()
-                return (data or {}).get("items") or []
-            except ValueError as e:
-                logger.warning(f"[ComfyUIDirect] civitai 响应非 JSON（镜像可能失效）: {e}")
-                return []
-        except httpx.HTTPError as e:
-            logger.error(f"[ComfyUIDirect] civitai 搜索失败: {e}")
-            return []
+        return await self._get_items("/api/v1/images", params)
 
     async def search_models(
-        self, query: str, types: str = "LORA", limit: int = 3
+        self,
+        query: str = "",
+        types: str = "",
+        limit: int = 5,
+        sort: str = "Highest Rated",
+        period: str = "AllTime",
+        base_models: list[str] | None = None,
+        nsfw: bool | None = None,
     ) -> list[dict]:
         """按名称搜模型，返回含 modelVersions（trainedWords 触发词）的条目。"""
-        params = {"query": query, "types": types, "limit": limit}
-        try:
-            resp = await self.client.get("/api/v1/models", params=params)
-            resp.raise_for_status()
-            try:
-                data = resp.json()
-                return (data or {}).get("items") or []
-            except ValueError as e:
-                logger.warning(f"[ComfyUIDirect] civitai 响应非 JSON（镜像可能失效）: {e}")
-                return []
-        except httpx.HTTPError as e:
-            logger.error(f"[ComfyUIDirect] civitai 模型搜索失败: {e}")
-            return []
+        params: dict = {
+            "query": query,
+            "types": types,
+            "limit": limit,
+            "sort": sort,
+            "period": period,
+            "baseModels": base_models or None,
+            "nsfw": None if nsfw is None else ("true" if nsfw else "false"),
+        }
+        return await self._get_items("/api/v1/models", params)
+
+    async def get_model(self, model_id: int | str) -> dict | None:
+        """按 id 取单个模型记录。"""
+        return await self._get_one(f"/api/v1/models/{model_id}")
+
+    async def get_model_version(self, version_id: int | str) -> dict | None:
+        """按 id 取单个模型版本：baseModel、trainedWords、示例图与文件信息。"""
+        return await self._get_one(f"/api/v1/model-versions/{version_id}")

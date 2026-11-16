@@ -30,6 +30,7 @@ class ComfyuiJobTool(FunctionTool[AstrAgentContext]):
         "按任务编号或 prompt_id 查询生成任务状态或取消任务。"
         "action=status：查询状态与输出；action=wait：返回队列任务当前状态；"
         "action=cancel：中断任务；action=queue：查看本会话的生成队列；"
+        "action=history：查看 ComfyUI 后端最近执行记录，可拿到历史 prompt_id 后配合 fetch 取回输出；"
         "action=fetch：复用或补下载输出图片。fetch 也支持显式 prompt_id 查询后端历史输出。"
         "不传编号时查询本会话最近的任务。结合原请求和当前人格自然说明结果，不照读状态字段；编号仅为内部标记，不用向用户声明或复述。插件队列任务自动通知完成，wait 也立即返回状态，无需反复查询。"
     )
@@ -39,8 +40,8 @@ class ComfyuiJobTool(FunctionTool[AstrAgentContext]):
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "wait", "cancel", "queue", "fetch"],
-                    "description": "操作：status=查状态（默认），wait=查当前状态，cancel=取消，queue=本会话队列，fetch=取回图片",
+                    "enum": ["status", "wait", "cancel", "queue", "history", "fetch"],
+                    "description": "操作：status=查状态（默认），wait=查当前状态，cancel=取消，queue=本会话队列，history=后端最近记录，fetch=取回图片",
                 },
                 "prompt_id": {
                     "type": "string",
@@ -114,10 +115,23 @@ class ComfyuiJobTool(FunctionTool[AstrAgentContext]):
         action = str(kwargs.get("action") or "status").strip().lower()
         queue = self.shared.get("generation_queue")
         identifier = str(kwargs.get("task_id") or kwargs.get("prompt_id") or "").strip()
-        if action not in {"status", "wait", "cancel", "queue", "fetch"}:
-            return "操作无效：支持 status / wait / cancel / queue / fetch。"
+        if action not in {"status", "wait", "cancel", "queue", "history", "fetch"}:
+            return "操作无效：支持 status / wait / cancel / queue / history / fetch。"
         if action == "fetch":
             return await self._fetch(context, identifier, kwargs)
+        if action == "history":
+            rows = await self.client.list_history(10)
+            if not rows:
+                return "ComfyUI 后端暂无执行记录（历史为空或服务端已清空）。"
+            lines = ["【ComfyUI 最近任务】"]
+            for row in rows:
+                status = row.get("status") or "?"
+                images = row.get("images") or []
+                image_note = f"，输出 {len(images)} 张: {images[0]}" if images else "，无图片输出"
+                wf_note = "" if row.get("has_workflow") else "（无工作流快照）"
+                lines.append(f"#{row.get('number')} {status}{image_note}{wf_note} prompt_id={row.get('prompt_id')}")
+            lines.append("用 action=fetch + prompt_id 可取回对应输出图片。")
+            return "\n".join(lines)
         if queue is not None:
             return await queue.action(action, identifier, _event_scope(context), include_ids=action == "queue")
         pid = str(kwargs.get("prompt_id") or "").strip() or _last_prompt_id(

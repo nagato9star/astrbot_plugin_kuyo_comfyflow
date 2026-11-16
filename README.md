@@ -195,20 +195,18 @@ Qwen Image 2.1 可分别配置 T2I 与编辑工作流：生图家族 `qwen` 绑�
 
 | 工具 | 说明 |
 |:---|:---|
-| `comfyui_draw` | 自由生图；必填 `model_family` 和 `prompt`，按家族选择工作流，可填写底模、LoRA、尺寸、分辨率选择器比例与目标 MP，并可另存配方 |
+| `comfyui_draw` | 自由生图；必填 `model_family` 和 `prompt`，按家族选择工作流，可填写底模、LoRA、尺寸、画幅比例与目标 MP（无分辨率选择器时自动换算宽高），并可另存配方 |
 | `comfyui_edit` | 用独立 `edit_workflow` 路由修改当前或引用消息中的一张或多张图片；可选分辨率与自定义画布参数 |
 | `comfyui_recipe_draw` | 快捷配方生图；填写本次 `prompt`，可选 `recipe`、`size` 和 `seed`，其余参数来自配方 |
-| `comfyui_lookup` | 统一查询角色、画师、作品系列与本地资源；支持家族筛选、分页、刷新、目录搜索和详细 tag 统计 |
-| `comfyui_job` | 本会话任务状态、取消、队列，以及 `action=fetch` 复用或补下载输出图片 |
+| `comfyui_lookup` | 统一查询角色、画师、作品系列与本地资源；`type=model_info` 取单个本地模型的完整元数据；支持家族筛选、分页、刷新、目录搜索和详细 tag 统计 |
+| `comfyui_job` | 本会话任务状态、取消、队列，`action=history` 查看后端最近执行记录，`action=fetch` 复用或补下载输出图片 |
 
 `llm_tool_mode=full` 额外启用以下工具，其中标注为需额外开关的工具还要求 `allow_llm_unsafe_tools=true`：
 
 | 工具 | 说明 |
 |:---|:---|
-| `comfyui_civitai_search` | 搜参考图并返回生成配方（模型/prompt/负向/sampler/steps/cfg/seed） |
-| `comfyui_model_info` | 查模型/LoRA 元数据与触发词（`source`=local / civitai） |
+| `comfyui_civitai_search` | civitai 在线查询：`mode=images` 搜参考图返回生成配方，`mode=models` 搜模型记录（版本/baseModel/官方触发词），`mode=version` 按 `model_version_id` 取版本详情与示例图配方 |
 | `comfyui_system_stats` | 查询设备、显存、系统内存及全局后端队列；`include_queue=false` 仅查系统 |
-| `comfyui_nodes` | 搜索节点类或查询节点输入输出结构 |
 | `comfyui_validate_workflow` | 提交前检查工作流节点和必填输入 |
 | `comfyui_recipe` | 保存、列出、加载配方；`action` 必填，保存时用 `description` 写用途说明并引用模型家族；删除动作需额外开关 |
 | `comfyui_upload_file` | 上传本地图片至 ComfyUI 的 input 目录，需额外开关 |
@@ -228,12 +226,13 @@ comfyui_lookup(type="model", model_family="sdxl", limit=5)
 comfyui_lookup(type="all", query="miaomao")
 comfyui_lookup(type="clip", query="clip")
 comfyui_lookup(type="folder", folder="checkpoints", query="base")
+comfyui_lookup(type="model_info", query="miao miao harem.safetensors", types="LORA")
 comfyui_lookup(type="all", refresh=true)
 comfyui_lookup(type="artist", query="artist_name", source="danbooru", detail=true)
 comfyui_lookup(type="copyright", query="作品名", source="animadex", page=2)
 ```
 
-默认每页 5 项，最多 10 项；有后续结果时返回 `next_offset`。省略家族和 `query` 时给出家族数量，`type=all` 给资源数量摘要。填写 `query` 后可省略家族按文件名跨家族搜索；`type=all` 会跨资源类别搜索。名称搜索忽略大小写与常见分隔符，找不到直接命中时返回少量近似名称并提示核对。搜索结果标明家族；选用底模或 LoRA 时仍需匹配生图工作流家族。`type=model` 表示底模。查询底模/LoRA 时可以省略 `query`，角色/画师查询仍需关键词。`comfyui_model_info` 也支持家族参数；底模元数据用 `types="Checkpoint"`，LoRA 用 `types="LORA"`。
+默认每页 5 项，最多 10 项；有后续结果时返回 `next_offset`。省略家族和 `query` 时给出家族数量，`type=all` 给资源数量摘要。填写 `query` 后可省略家族按文件名跨家族搜索；`type=all` 会跨资源类别搜索。名称搜索忽略大小写与常见分隔符，找不到直接命中时返回少量近似名称并提示核对。搜索结果标明家族；选用底模或 LoRA 时仍需匹配生图工作流家族。`type=model` 表示底模。查询底模/LoRA 时可以省略 `query`，角色/画师查询仍需关键词。`type=model_info` 按文件名取单个本地模型的完整元数据（LoRA Manager sidecar 优先，回退 safetensors 头部），支持 `types="LORA"`/`"Checkpoint"` 与 `model_family` 限定；查 civitai 在线记录与官方触发词时用 `comfyui_civitai_search(mode="models" 或 "version")`。
 
 归类优先级：插件配置中的 `resource_family_rules` → 基础模型元数据 → 目录/文件名推断。配置规则支持大小写及斜杠归一化，例如 `kind=lora, family=anima, pattern=Anima/*`；无特征的底模可用完整文件名配置。家族名应与生图路由一致，自定义路由需添加对应规则。SDXL、Pony、Illustrious 分别列出；FLUX Krea 与 Krea2 分开归类。
 
@@ -244,7 +243,7 @@ LoRA 名称可跨家族查询；按分类、标签和用途关键词挑选 LoRA 
 
 `comfyui_draw` 与 `comfyui_recipe` 的 `lora` 使用对象数组，例如 `[{"name":"style.safetensors","strength":0.6}]`；文件名要替换成查询结果。传入数组会覆盖工作流映射的可选 LoRA 槽位；独立加速 LoRA 保持工作流原值。省略时沿用可选 LoRA 原值，传空数组关闭映射槽位。旧版字符串输入仍由运行时解析。
 
-选用 LoRA 时，可将查询返回的已知触发词同步填入 `trigger_words`，保留原词格式，无需用户再次提出。查询未提供触发词时可省略该字段并继续使用 LoRA。插件的绘图工具仍由调用方显式填写触发词；工作台选 LoRA 后自动填充文本框的行为保持不变。
+使用 LoRA 时应一并携带查询返回或用户提供的已知触发词，保留原词格式，无需用户再次提出。沿用工作流内置 LoRA 时也应遵守此规则，不能假设加载 LoRA 就会自动补词。有独立触发词映射时填写 `trigger_words`，没有时写入实际读取的 `prompt`；已有生效触发词不重复添加。保存含 LoRA 的配方时一并保存已知触发词；使用 `comfyui_recipe_draw` 时若已知触发词缺失，将其补入本次 `prompt`。查询仍未提供触发词时不编造，可省略并继续使用 LoRA。插件的绘图工具仍由调用方显式填写触发词；工作台选 LoRA 后自动填充文本框的行为保持不变。
 
 ## 🖥️ WebUI：Workflow Studio
 

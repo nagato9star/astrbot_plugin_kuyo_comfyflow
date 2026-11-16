@@ -11,7 +11,7 @@ from pydantic import ConfigDict
 from pydantic import Field
 from pydantic.dataclasses import dataclass
 from ..clients.comfyui import ComfyUIClient
-from .common import MAX_LLM_LIST_ITEMS, _as_bool
+from .common import _as_bool
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -101,74 +101,6 @@ class ComfyuiFreeMemoryTool(FunctionTool[AstrAgentContext]):
         unload = _as_bool(kwargs.get("unload_models", True), default=True)
         ok = await self.client.free_memory(unload_models=unload, free_cache=True)
         return "已请求释放显存（卸载模型+清缓存）。" if ok else "释放失败：无法连接 ComfyUI。"
-
-
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class ComfyuiNodesTool(FunctionTool[AstrAgentContext]):
-    """查询 ComfyUI 节点类信息（等价 MCP nodes）。"""
-
-    name: str = "comfyui_nodes"
-    description: str = (
-        "查询 ComfyUI 节点类（class_type）信息：action=search 按关键词搜节点类，"
-        "action=get 查某个节点类的输入/输出 schema，action=list 列出全部节点类。"
-        "写自定义工作流、确认某个节点类是否存在/参数名时使用。"
-    )
-    parameters: dict = Field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["search", "get", "list"],
-                    "description": "search=搜索（默认），get=查单个类 schema，list=全部节点类",
-                },
-                "query": {
-                    "type": "string",
-                    "description": "搜索关键词（action=search 时必填）或节点类名（action=get 时必填）",
-                },
-            },
-        }
-    )
-    client: ComfyUIClient | None = None
-
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        action = str(kwargs.get("action") or "search").strip().lower()
-        query = str(kwargs.get("query") or "").strip()
-        obj = await self.client.get_object_info()
-        if not obj:
-            return "查询失败：无法连接 ComfyUI。"
-        if action == "list":
-            names = sorted(obj.keys())
-            shown = names[:MAX_LLM_LIST_ITEMS]
-            suffix = f"\n（共 {len(names)} 个，仅显示前 {MAX_LLM_LIST_ITEMS} 个；用 search 精确查找）" if len(names) > len(shown) else ""
-            return "全部节点类 (" + str(len(names)) + "):\n" + ", ".join(shown) + suffix
-        if action == "get":
-            if not query:
-                return "查询失败：query（节点类名）不能为空。"
-            info = obj.get(query)
-            if not info:
-                return f"节点类不存在: {query}"
-            inp = info.get("input", {})
-            req = inp.get("required", {})
-            opt = inp.get("optional", {})
-            parts = [f"【节点类 {query}】"]
-            if req:
-                parts.append("必填输入:")
-                for k, v in req.items():
-                    types = v[0] if isinstance(v, list) and v else "?"
-                    parts.append(f"  {k}: {types}")
-            if opt:
-                parts.append("可选输入:")
-                for k, v in opt.items():
-                    types = v[0] if isinstance(v, list) and v else "?"
-                    parts.append(f"  {k}: {types}")
-            return "\n".join(parts)
-        if not query:
-            return "查询失败：query（关键词）不能为空。"
-        hits = [k for k in obj if query.lower() in k.lower()]
-        if not hits:
-            return f"未找到包含 '{query}' 的节点类。"
-        return "匹配节点类:\n" + "\n".join(sorted(hits)[:50])
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))

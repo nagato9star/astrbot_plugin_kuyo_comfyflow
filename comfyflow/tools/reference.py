@@ -226,248 +226,311 @@ def _all_resource_search(client, resources, query, family="", limit=5, offset=0,
     return "\n".join(lines)
 
 
+async def _local_model_info(client: ComfyUIClient, name: str, kind: str) -> str:
+    """本地模型元数据：LoRA Manager sidecar 优先，回退 safetensors 头部。"""
+    # LoRA Manager 保存的 sidecar/Civitai 信息比 safetensors 头部更完整，
+    # 尤其是 style/character 分类、用途说明和推荐权重。
+    manager_meta = await client.get_lora_manager_metadata(name) if kind == "lora" else None
+    manager_info = ComfyUIClient.normalize_lora_metadata(manager_meta)
+    if manager_info:
+        lines = [f"【LoRA Manager】{name}"]
+        lines.extend(_lora_info_summary(manager_info, detailed=True))
+        return "\n".join(lines)
+
+    meta = await client.get_model_metadata(
+        name, folders=["loras"] if kind == "lora" else ["checkpoints", "diffusion_models", "unet"]
+    )
+    if not meta:
+        return f"本地未找到模型 {name}，或该文件没有元数据头部（可用 comfyui_civitai_search 在线搜索）。"
+
+    parts = [f"【本地模型】{name}"]
+    title = (
+        meta.get("modelspec.title")
+        or meta.get("ss_title")
+        or meta.get("sd_models/name")
+        or ""
+    )
+    author = meta.get("modelspec.author") or meta.get("ss_creator") or ""
+    tags = meta.get("modelspec.tags") or meta.get("ss_tags") or ""
+    if title:
+        parts.append(f"标题: {title}")
+    if author:
+        parts.append(f"作者: {author}")
+    if tags:
+        parts.append(f"标签: {tags}")
+    triggers, _source = ComfyUIClient._extract_trigger_words(meta)
+    if triggers:
+        parts.append(f"触发词: {', '.join(triggers)}")
+    elif not title and not author and not tags:
+        # 有元数据但都是技术字段：给个头部键名摘要
+        keys = [k for k in meta if not k.startswith("ss_")]
+        if keys:
+            parts.append("元数据键: " + ", ".join(keys[:12]))
+    return "\n".join(parts)
+
+
+# 本插件家族 → Civitai baseModels 过滤值；无映射的家族不缩小结果。
+_CIVITAI_BASE_MODELS: dict[str, list[str]] = {
+    "moss": ["MOSS"],
+    "flux": ["Flux.1 D", "Flux.1 S", "Flux.1 Krea", "Flux.2 D", "Flux.2 Schnell"],
+    "krea2": ["Flux.1 Krea"],
+    "qwen": ["Qwen"],
+    "chroma": ["Chroma"],
+    "illustrious": ["Illustrious"],
+    "noobai": ["NoobAI"],
+    "pony": ["Pony"],
+    "sdxl": ["SDXL 1.0", "SDXL 0.9", "SDXL Turbo", "SDXL 1.0 LCM", "SDXL Lightning"],
+    "sd15": ["SD 1.5", "SD 1.4", "SD 1.5 LCM"],
+    "sd3": ["SD 3", "SD 3.5", "SD 3.5 Medium", "SD 3.5 Large", "SD 3.5 Large Turbo"],
+    "wan": ["Wan Video"],
+    "hunyuan": ["Hunyuan 1", "Hunyuan Video"],
+    "hidream": ["HiDream"],
+    "ltxv": ["LTXV"],
+}
+
+_CIVITAI_IMAGE_SORTS = {
+    "most reactions": "Most Reactions",
+    "reactions": "Most Reactions",
+    "most comments": "Most Comments",
+    "comments": "Most Comments",
+    "newest": "Newest",
+}
+_CIVITAI_MODEL_SORTS = {
+    "highest rated": "Highest Rated",
+    "rated": "Highest Rated",
+    "most downloaded": "Most Downloaded",
+    "downloaded": "Most Downloaded",
+    "newest": "Newest",
+}
+_CIVITAI_PERIODS = {
+    "day": "Day", "week": "Week", "month": "Month",
+    "year": "Year", "alltime": "AllTime", "all": "AllTime",
+}
+
+
+def _civitai_base_models(kwargs: dict) -> list[str] | None:
+    """base_model 精确值优先，否则按本插件家族映射为 civitai baseModels 列表。"""
+    explicit = str(kwargs.get("base_model") or "").strip()
+    if explicit:
+        return [explicit]
+    family = canonical_family(kwargs.get("model_family"))
+    return _CIVITAI_BASE_MODELS.get(family)
+
+
+def _civitai_norm_sort(raw: Any, allowed: dict, default: str) -> str:
+    return allowed.get(str(raw or "").strip().casefold(), default)
+
+
+def _civitai_norm_period(raw: Any) -> str:
+    return _CIVITAI_PERIODS.get(str(raw or "").strip().casefold(), "AllTime")
+
+
+def _truncate(s: str, n: int) -> str:
+    s = " ".join(str(s or "").split())
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def _civitai_image_recipe_lines(item: dict, index: int) -> list[str]:
+    """一张 civitai 示例图的生成配方（含版本 id，便于下钻）。"""
+    meta = item.get("meta") or {}
+    model = meta.get("Model") or meta.get("model") or item.get("modelName") or "未知模型"
+    lines = [f"[{index}] 模型: {model}"]
+    if meta.get("prompt"):
+        lines.append(f"prompt: {_truncate(meta['prompt'], 400)}")
+    if meta.get("negativePrompt"):
+        lines.append(f"负向: {_truncate(meta['negativePrompt'], 200)}")
+    sampler = meta.get("sampler") or "?"
+    steps = meta.get("steps") or "?"
+    cfg = meta.get("cfgScale") or "?"
+    seed = meta.get("seed") or "?"
+    lines.append(f"sampler/steps/cfg/seed: {sampler} / {steps} / {cfg} / {seed}")
+    if item.get("modelVersionId"):
+        lines.append(f"model_version_id={item['modelVersionId']}")
+    if item.get("url"):
+        lines.append(f"图: {item['url']}")
+    return lines
+
+
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
 class ComfyuiCivitaiSearchTool(FunctionTool[AstrAgentContext]):
-    """civitai 搜图查生成配方。"""
+    """civitai 图片配方 / 模型记录 / 版本详情查询。"""
 
     name: str = "comfyui_civitai_search"
     description: str = (
-        "在 civitai 搜索参考图并返回其完整生成配方（模型、正向/负向提示词、采样器、"
-        "步数、cfg、seed），可在确认家族和兼容性后填进 comfyui_draw 的参数。"
-        "用户想参考某风格/某模型的作品或找现成提示词时使用。"
+        "查询 civitai 在线资源。mode=images（默认）按关键词搜参考图并返回其完整生成配方"
+        "（模型、提示词、采样器、步数、cfg、seed），确认家族兼容后可填进 comfyui_draw；"
+        "mode=models 搜模型记录，列出各版本 baseModel、官方触发词与 model_version_id；"
+        "mode=version 按 model_version_id 取单个版本详情与示例图配方。"
+        "用户想参考某风格/某模型的作品、找现成提示词、或查某个 LoRA/底模在 civitai 上的"
+        "触发词与兼容性时使用。本地已装模型信息改用 comfyui_lookup。"
     )
     parameters: dict = Field(
         default_factory=lambda: {
             "type": "object",
             "properties": {
+                "mode": {
+                    "type": "string",
+                    "enum": ["images", "models", "version"],
+                    "description": "images=搜图取配方（默认），models=搜模型记录，version=按版本 id 取详情",
+                },
                 "query": {
                     "type": "string",
-                    "description": "搜索关键词（风格/角色/模型名等）",
+                    "description": "搜索关键词（风格/角色/模型名）；images/models 模式必填，version 模式省略",
                 },
                 "limit": {
                     "type": "number",
-                    "description": "返回配方条数（1-10，默认 5）",
+                    "description": "返回条数（1-10，默认 5）",
                 },
                 "nsfw": {
                     "type": "boolean",
                     "description": "是否包含 NSFW 内容（默认 false）",
                 },
+                "sort": {
+                    "type": "string",
+                    "description": "排序：images 支持 Most Reactions(默认)/Most Comments/Newest；models 支持 Highest Rated(默认)/Most Downloaded/Newest",
+                },
+                "period": {
+                    "type": "string",
+                    "enum": ["Day", "Week", "Month", "Year", "AllTime"],
+                    "description": "时间范围，默认 AllTime",
+                },
+                "types": {
+                    "type": "string",
+                    "description": "models 模式的类型过滤，如 LORA、Checkpoint、TextualInversion；省略搜全部类型",
+                },
+                "base_model": {
+                    "type": "string",
+                    "description": "Civitai baseModel 精确值（如 Flux.1 D、Illustrious）；比 model_family 更精确时优先",
+                },
+                "model_family": _RESOURCE_QUERY_PROPERTIES["model_family"],
+                "model_id": {
+                    "type": "number",
+                    "description": "限定 civitai 模型 id：images 模式只看该模型的示例图",
+                },
+                "model_version_id": {
+                    "type": "number",
+                    "description": "civitai 模型版本 id：version 模式必填，images 模式按此过滤该版本的示例图",
+                },
             },
-            "required": ["query"],
+            "required": [],
         }
     )
     client: CivitaiClient | None = None
 
     @staticmethod
-    def _truncate(s: str, n: int) -> str:
-        s = (s or "").strip()
-        return s if len(s) <= n else s[:n] + "…"
+    def _int_or_none(value: Any) -> int | None:
+        try:
+            return int(value) if value not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+
+    async def _images(self, query: str, kwargs: dict, limit: int, nsfw: bool) -> str:
+        sort = _civitai_norm_sort(kwargs.get("sort"), _CIVITAI_IMAGE_SORTS, "Most Reactions")
+        period = _civitai_norm_period(kwargs.get("period"))
+        model_id = self._int_or_none(kwargs.get("model_id"))
+        version_id = self._int_or_none(kwargs.get("model_version_id"))
+        items = await self.client.search_images(
+            query, limit=limit, nsfw=nsfw, sort=sort, period=period,
+            model_id=model_id, model_version_id=version_id,
+        )
+        if not items:
+            return f"civitai 未找到相关图片：{query or f'version {version_id}'}"
+        scope = f"搜索: {query}" if query else f"版本 {version_id or model_id} 的示例图"
+        parts = [f"【civitai 配方参考】{scope}（{sort}/{period}）"]
+        for i, item in enumerate(items, 1):
+            parts.append("")
+            parts.extend(_civitai_image_recipe_lines(item, i))
+        return "\n".join(parts)
+
+    async def _models(self, query: str, kwargs: dict, limit: int, nsfw: bool) -> str:
+        sort = _civitai_norm_sort(kwargs.get("sort"), _CIVITAI_MODEL_SORTS, "Highest Rated")
+        period = _civitai_norm_period(kwargs.get("period"))
+        types = str(kwargs.get("types") or "").strip()
+        base_models = _civitai_base_models(kwargs)
+        items = await self.client.search_models(
+            query, types=types, limit=limit, sort=sort, period=period,
+            base_models=base_models, nsfw=nsfw,
+        )
+        if not items:
+            return f"civitai 未找到匹配的模型：{query}"
+        parts = [f"【civitai 模型】搜索: {query}（{sort}/{period}）"]
+        if base_models:
+            parts.append(f"baseModel 过滤: {', '.join(base_models)}")
+        for i, item in enumerate(items, 1):
+            stats = item.get("stats") or {}
+            creator = (item.get("creator") or {}).get("username") or "?"
+            parts.append("")
+            parts.append(f"[{i}] {item.get('name') or '?'}（{item.get('type') or '?'}）by {creator} | model_id={item.get('id')}")
+            dl = stats.get("downloadCount", 0)
+            like = stats.get("thumbsUpCount", 0)
+            if dl or like:
+                parts.append(f"下载 {dl} | 点赞 {like}")
+            for v in (item.get("modelVersions") or [])[:3]:
+                base = v.get("baseModel") or "?"
+                parts.append(f"  版本: {v.get('name') or '?'}（{base}）model_version_id={v.get('id')}")
+                tw = [t for t in (v.get("trainedWords") or []) if t]
+                parts.append(f"  触发词: {', '.join(tw[:10])}" if tw else "  触发词: 未记录")
+            tags = [str(t).strip() for t in (item.get("tags") or []) if str(t).strip()]
+            if tags:
+                parts.append(f"标签: {', '.join(tags[:12])}")
+            description = _truncate(item.get("description"), 320)
+            if description:
+                parts.append(f"用途说明: {description}")
+        parts.append("")
+        parts.append("用 model_version_id 调 mode=version 取该版本详情，或 mode=images+model_version_id 取它的示例图配方。")
+        return "\n".join(parts)
+
+    async def _version(self, kwargs: dict, nsfw: bool) -> str:
+        version_id = self._int_or_none(kwargs.get("model_version_id"))
+        if version_id is None:
+            return "查询失败：mode=version 需要 model_version_id。"
+        v = await self.client.get_model_version(version_id)
+        if not v:
+            return f"civitai 未找到版本 {version_id}。"
+        model = v.get("model") or {}
+        parts = [f"【civitai 版本】{model.get('name') or '?'}（{model.get('type') or '?'}）/ {v.get('name') or '?'}"]
+        parts.append(f"model_id={v.get('modelId')} | model_version_id={v.get('id')} | baseModel: {v.get('baseModel') or '?'}")
+        tw = [t for t in (v.get("trainedWords") or []) if t]
+        parts.append(f"触发词: {', '.join(tw[:16])}" if tw else "触发词: 未记录")
+        description = _truncate(v.get("description"), 400)
+        if description:
+            parts.append(f"说明: {description}")
+        files = v.get("files") or []
+        if files:
+            f0 = files[0]
+            size = f0.get("sizeKB")
+            size_text = f"{size / 1024:.0f}MB" if isinstance(size, (int, float)) else "?"
+            parts.append(f"文件: {f0.get('name') or '?'}（{size_text}）")
+        images = v.get("images") or []
+        if not nsfw:
+            images = [img for img in images
+                      if int(img.get("nsfwLevel") or 1) <= 1 and not img.get("nsfw")]
+        if images:
+            parts.append(f"示例图 {len(images)} 张，配方如下：")
+            for i, item in enumerate(images[:3], 1):
+                parts.append("")
+                parts.extend(_civitai_image_recipe_lines(item, i))
+        return "\n".join(parts)
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
+        if self.client is None:
+            return "查询失败：civitai 接口未配置。"
+        mode = str(kwargs.get("mode") or "images").strip().lower()
+        if mode not in {"images", "models", "version"}:
+            return "查询失败：mode 仅支持 images / models / version。"
         query = str(kwargs.get("query") or "").strip()
-        if not query:
-            return "查询失败：query 不能为空。"
         try:
             limit = min(max(int(kwargs.get("limit") or 5), 1), 10)
         except (TypeError, ValueError):
             limit = 5
         nsfw = _as_bool(kwargs.get("nsfw", False))
-
-        items = await self.client.search_images(query, limit, nsfw)
-        if not items:
-            return f"civitai 未找到相关图片：{query}"
-
-        parts = [f"【civitai 配方参考】搜索: {query}（按最多反应排序）"]
-        for i, item in enumerate(items, 1):
-            meta = item.get("meta") or {}
-            model = (
-                meta.get("Model")
-                or meta.get("model")
-                or item.get("modelName")
-                or "未知模型"
-            )
-            parts.append("")
-            parts.append(f"[{i}] 模型: {model}")
-            if meta.get("prompt"):
-                parts.append(f"prompt: {self._truncate(meta['prompt'], 400)}")
-            if meta.get("negativePrompt"):
-                parts.append(f"负向: {self._truncate(meta['negativePrompt'], 200)}")
-            sampler = meta.get("sampler") or "?"
-            steps = meta.get("steps") or "?"
-            cfg = meta.get("cfgScale") or "?"
-            seed = meta.get("seed") or "?"
-            parts.append(f"sampler/steps/cfg/seed: {sampler} / {steps} / {cfg} / {seed}")
-            url = item.get("url") or ""
-            if url:
-                parts.append(f"图: {url}")
-        return "\n".join(parts)
-
-
-@dataclass(config=ConfigDict(arbitrary_types_allowed=True))
-class ComfyuiModelInfoTool(FunctionTool[AstrAgentContext]):
-    """模型/LoRA 元数据与触发词查询（本地 safetensors 头部 / civitai trainedWords）。"""
-
-    name: str = "comfyui_model_info"
-    description: str = (
-        "查询模型或 LoRA 的元数据与触发词：source=local 读 本机 上已装模型的 "
-        "safetensors 头部信息（标题/作者/标签/训练触发词）；source=civitai 按名称搜索 "
-        "civitai 模型记录（含官方 trainedWords 触发词）。用户想知道某个模型/LoRA 是干嘛的、"
-        "触发词是什么时使用。"
-    )
-    parameters: dict = Field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "模型文件名（local，如 miaomiaoRealskin_anima11.safetensors）或模型名（civitai，如 anima）",
-                },
-                "source": {
-                    "type": "string",
-                    "enum": ["local", "civitai"],
-                    "description": "查询源：local=本地已装模型（默认），civitai=在线搜索",
-                },
-                "types": {
-                    "type": "string",
-                    "enum": ["LORA", "Checkpoint"],
-                    "description": "模型类型：LORA 或 Checkpoint（底模）；本地可省略并自动识别",
-                },
-                "model_family": _RESOURCE_QUERY_PROPERTIES["model_family"],
-            },
-            "required": ["name"],
-        }
-    )
-    client: ComfyUIClient | None = None
-    civitai: CivitaiClient | None = None
-
-    @staticmethod
-    def _extract_trigger_words(meta: dict) -> list[str]:
-        """从 safetensors 元数据提取触发词，兼容字符串/嵌套频率表。"""
-        words, _source = ComfyUIClient._extract_trigger_words(meta)
-        return words
-
-    async def _query_local(self, name: str, kind: str = "lora") -> str:
-        # LoRA Manager 保存的 sidecar/Civitai 信息比 safetensors 头部更完整，
-        # 尤其是 style/character 分类、用途说明和推荐权重。
-        manager_meta = await self.client.get_lora_manager_metadata(name) if kind == "lora" else None
-        manager_info = ComfyUIClient.normalize_lora_metadata(manager_meta)
-        if manager_info:
-            lines = [f"【LoRA Manager】{name}"]
-            lines.extend(_lora_info_summary(manager_info, detailed=True))
-            return "\n".join(lines)
-
-        meta = await self.client.get_model_metadata(
-            name, folders=["loras"] if kind == "lora" else ["checkpoints", "diffusion_models", "unet"]
-        )
-        if not meta:
-            return f"本地未找到模型 {name}，或该文件没有元数据头部（可试 source=civitai 在线搜索）。"
-
-        parts = [f"【本地模型】{name}"]
-        title = (
-            meta.get("modelspec.title")
-            or meta.get("ss_title")
-            or meta.get("sd_models/name")
-            or ""
-        )
-        author = meta.get("modelspec.author") or meta.get("ss_creator") or ""
-        tags = meta.get("modelspec.tags") or meta.get("ss_tags") or ""
-        if title:
-            parts.append(f"标题: {title}")
-        if author:
-            parts.append(f"作者: {author}")
-        if tags:
-            parts.append(f"标签: {tags}")
-        triggers = self._extract_trigger_words(meta)
-        if triggers:
-            parts.append(f"触发词: {', '.join(triggers)}")
-        elif not title and not author and not tags:
-            # 有元数据但都是技术字段：给个头部键名摘要
-            keys = [k for k in meta if not k.startswith("ss_")]
-            if keys:
-                parts.append("元数据键: " + ", ".join(keys[:12]))
-        return "\n".join(parts)
-
-    @staticmethod
-    def _query_civitai_items(items: list[dict], query: str) -> str:
-        if not items:
-            return f"civitai 未找到匹配的模型：{query}"
-        parts = [f"【civitai 模型】搜索: {query}"]
-        for i, item in enumerate(items[:3], 1):
-            name = item.get("name") or "?"
-            mtype = item.get("type") or "?"
-            creator = (item.get("creator") or {}).get("username") or "?"
-            stats = item.get("stats") or {}
-            parts.append("")
-            parts.append(f"[{i}] {name}（{mtype}）by {creator}")
-            dl = stats.get("downloadCount", 0)
-            like = stats.get("thumbsUpCount", 0)
-            if dl or like:
-                parts.append(f"下载 {dl} | 点赞 {like}")
-            versions = item.get("modelVersions") or []
-            if versions:
-                v = versions[0]
-                vname = v.get("name") or "?"
-                base = v.get("baseModel") or "?"
-                parts.append(f"版本: {vname}（{base}）")
-                tw = [t for t in (v.get("trainedWords") or []) if t]
-                if tw:
-                    parts.append(f"触发词: {', '.join(tw[:10])}")
-                else:
-                    parts.append("触发词: 未记录")
-            tags = [str(tag).strip() for tag in (item.get("tags") or []) if str(tag).strip()]
-            if tags:
-                parts.append(f"标签: {', '.join(tags[:12])}")
-            description = " ".join(str(item.get("description") or "").split())
-            if description:
-                suffix = "…" if len(description) > 320 else ""
-                parts.append(f"用途说明: {description[:320]}{suffix}")
-        return "\n".join(parts)
-
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        name = str(kwargs.get("name") or "").strip()
-        if not name:
-            return "查询失败：name 不能为空。"
-        source = str(kwargs.get("source") or "local").strip().lower()
-
-        if source == "local":
-            if self.client is None:
-                return "查询失败：本地模型接口未配置。"
-            resources, _ = await self.client.list_resources()
-            requested = str(kwargs.get("types") or "").casefold()
-            kinds = ["lora"] if requested == "lora" else ["model"] if requested == "checkpoint" else ["lora", "model"]
-            family = str(kwargs.get("model_family") or "")
-            matches = []
-            for kind in kinds:
-                names = resources.get("lora_name" if kind == "lora" else "unet_name") or []
-                if family:
-                    names = filter_family(names, metadata_for(resources, kind), family,
-                                          getattr(self.client, "resource_family_rules", []), kind)
-                matches.extend((kind, n) for n in _match_resource(names, name))
-            if len(matches) != 1:
-                return "未找到唯一匹配模型；请指定 types、model_family 和含目录的完整文件名，先用 comfyui_lookup 查询。"
-            kind, filename = matches[0]
-            found, evidence = resource_family(filename, metadata_for(resources, kind).get(filename),
-                                               getattr(self.client, "resource_family_rules", []), kind)
-            detail = await self._query_local(filename, kind)
-            return f"家族={found or 'unknown'}（{evidence}）\n{detail}"
-
-        if source == "civitai":
-            if self.civitai is None:
-                return "查询失败：civitai 接口未配置。"
-            types = str(kwargs.get("types") or "LORA").strip()
-            items = await self.civitai.search_models(name, types=types, limit=3)
-            family = canonical_family(kwargs.get("model_family"))
-            if family:
-                filtered = []
-                for item in items:
-                    versions = [v for v in item.get("modelVersions") or []
-                                if resource_family("", {"base_model": v.get("baseModel")})[0] == family]
-                    if versions:
-                        filtered.append({**item, "modelVersions": versions})
-                items = filtered
-            return self._query_civitai_items(items, name)
-
-        return "查询失败：source 仅支持 local / civitai。"
+        if mode == "version":
+            return await self._version(kwargs, nsfw)
+        if not query:
+            return "查询失败：query 不能为空。"
+        if mode == "models":
+            return await self._models(query, kwargs, limit, nsfw)
+        return await self._images(query, kwargs, limit, nsfw)
 
 
 @dataclass(config=ConfigDict(arbitrary_types_allowed=True))
@@ -479,6 +542,7 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
         "查询角色/画师规范词、作品系列、本机底模/LoRA/CLIP/VAE/Embedding及已保存配方。"
         "model/lora 的 query 可跨家族按名称搜索；按用途挑选 LoRA 时填写生图家族，"
         "结果包含用途、推荐权重和已知触发词。选用文件名与家族须匹配生图工作流。"
+        "model_info 按文件名取单个本地模型的完整元数据（标题/作者/标签/触发词/使用建议），civitai 在线记录用 comfyui_civitai_search。"
         "character 默认支持中文名与有来源的外观参考；artist 触发词写进 artist。"
         "detail=true 展开资源元数据、配方参数，或取样统计角色/画师作品 tag；source 可选 danbooru/gelbooru/animadex。"
         "recipe 按名称、用途或家族查已有配方，适合选用现成方案；查询不会修改配方。"
@@ -492,12 +556,18 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
             "type": {
                 "type": "string",
                 "enum": ["character", "artist", "copyright", "model", "lora",
-                         "clip", "vae", "embedding", "all", "folder", "recipe"],
-                "description": "查询对象；all=资源摘要/跨类别搜索，folder=指定目录，recipe=只读配方目录",
+                         "clip", "vae", "embedding", "all", "folder", "recipe",
+                         "model_info"],
+                "description": "查询对象；all=资源摘要/跨类别搜索，folder=指定目录，recipe=只读配方目录，model_info=单个本地模型元数据",
             },
             "query": {
                 "type": "string",
-                "description": "名称或用途关键词；角色/画师/作品系列必填，资源浏览可省略",
+                "description": "名称或用途关键词；角色/画师/作品系列/model_info 必填，资源浏览可省略",
+            },
+            "types": {
+                "type": "string",
+                "enum": ["LORA", "Checkpoint"],
+                "description": "model_info 的模型类型限定；省略时按文件名自动识别",
             },
             "folder": {
                 "type": "string",
@@ -574,9 +644,35 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
         more = f"\nnext_offset={offset + limit}" if offset + limit < len(names) else ""
         return f"【{title}】共 {len(names)} 项\n" + "\n".join(names[offset:offset + limit]) + more
 
+    async def _model_info(self, query: str, kwargs: dict) -> str:
+        if self.client is None:
+            return "查询失败：ComfyUI 未配置。"
+        if not query:
+            return "查询失败：type=model_info 需要 query 指定模型文件名。"
+        resources, _ = await self.client.list_resources()
+        requested = str(kwargs.get("types") or "").casefold()
+        kinds = ["lora"] if requested == "lora" else ["model"] if requested == "checkpoint" else ["lora", "model"]
+        family = str(kwargs.get("model_family") or "")
+        matches = []
+        for kind in kinds:
+            names = resources.get("lora_name" if kind == "lora" else "unet_name") or []
+            if family:
+                names = filter_family(names, metadata_for(resources, kind), family,
+                                      getattr(self.client, "resource_family_rules", []), kind)
+            matches.extend((kind, n) for n in _match_resource(names, query))
+        if len(matches) != 1:
+            return "未找到唯一匹配模型；请指定 types、model_family 和含目录的完整文件名，或用 type=model/lora 浏览。"
+        kind, filename = matches[0]
+        found, evidence = resource_family(filename, metadata_for(resources, kind).get(filename),
+                                           getattr(self.client, "resource_family_rules", []), kind)
+        detail = await _local_model_info(self.client, filename, kind)
+        return f"家族={found or 'unknown'}（{evidence}）\n{detail}"
+
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
         kind = str(kwargs.get("type") or "").strip().lower()
         query = str(kwargs.get("query") or "").strip()
+        if kind == "model_info":
+            return await self._model_info(query, kwargs)
         if kind == "recipe":
             return lookup_recipes(self.store, query, kwargs)
         if kind in {"model", "lora", "clip", "vae", "embedding", "all", "folder"}:
