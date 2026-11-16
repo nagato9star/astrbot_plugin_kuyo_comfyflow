@@ -19,6 +19,7 @@ def infer_family(value: str) -> str:
     text = str(value or "").casefold().replace("\\", "/")
     # Specific architectures come first; FLUX.1 Krea remains a Flux model.
     patterns = (
+        (r"moss[ _.-]*image|(?:^|[/_. -])moss(?:[/_. -]|$)", "moss"),
         (r"krea[ _.-]*2|^krea$", "krea2"), (r"flux", "flux"),
         (r"anima(?![a-z])", "anima"), (r"illustrious|noobai", "illustrious"),
         (r"pony", "pony"), (r"sd[ _.-]*xl|stable.diffusion.xl", "sdxl"),

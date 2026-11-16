@@ -54,7 +54,7 @@ class ComfyuiRecipeTool(FunctionTool[AstrAgentContext]):
                 },
                 "artist": {"type": "string", "description": "画师串"},
                 "quality": {"type": "string", "description": "质量词"},
-                "trigger_words": {"type": "string", "description": "lora触发词"},
+                "trigger_words": {"type": "string", "description": "保存含 LoRA 的配方时应一并保存已知触发词，保留原始格式，多个用逗号分隔；查询仍未知时不编造"},
                 "negative_prompt": {"type": "string", "description": "负向提示词"},
                 "model": {"type": "string", "description": "底模文件名"},
                 "lora": _lora_array_schema("LoRA 对象数组，省略沿用已有设置；旧版 JSON 字符串仍可解析"),
@@ -192,6 +192,7 @@ _RECIPE_DRAW_DESC = (
     "使用已经实验并保存好的配方快捷生成新图片，完成后直接发送到当前会话；修改现有图片使用 comfyui_edit。"
     "prompt 必填，可主动选择符合用户需求的已保存配方；需要了解用途先用 comfyui_lookup(type=recipe)。省略 recipe 使用配置的默认配方。"
     "配方保存底模、LoRA、画幅和采样参数，并通过 model family 使用当前配置的工作流。"
+    "使用 LoRA 时应携带已知触发词；优先沿用配方中已生效的触发词，已知缺失时补入本次 prompt，不假设工作流内置 LoRA 会自动补词。"
     "本工具用于复用固定方案；需要自由选择底模、LoRA 或采样参数时调用 comfyui_draw。"
     + _ASYNC_GENERATION_HINT
 )

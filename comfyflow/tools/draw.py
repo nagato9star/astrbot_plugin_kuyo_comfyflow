@@ -42,8 +42,9 @@ from .reference import _match_lora_resources
 _DRAW_DESC = (
     "从文字生成新图片并发送；需要修改现有图片时使用 comfyui_edit。model_family、prompt 必填，提示词遵循家族 prompt_style。"
     "省略可选参数沿用工作流。可按画风、角色、服饰或效果需求主动用 comfyui_lookup 查询并选用 LoRA；"
-    "分辨率选择器工作流可用 aspect_ratio 和 megapixels 覆盖比例与目标百万像素数；"
+    "可用 aspect_ratio 和 megapixels 覆盖画幅比例与目标像素，工作流没有分辨率选择器时按当前画布像素量换算宽高；"
     "按用途、类别或标签查询资源时传 model_family；完整已知文件名可跨家族查找。使用前核对资源与当前家族兼容，并采用返回的文件名、推荐权重和已知触发词。"
+    "使用 LoRA 时应带上已知触发词，沿用工作流内置 LoRA 也不能假设会自动补词；有独立触发词映射时填写 trigger_words，否则写入 prompt，已生效的词不重复添加。未知触发词先查询，不编造。"
     "复用配方用 comfyui_recipe_draw。"
     + _ASYNC_GENERATION_HINT
 )
@@ -72,7 +73,7 @@ class ComfyuiDrawTool(FunctionTool[AstrAgentContext]):
                     "description": "换底模。用户没点名就不要填。关键词或文件名",
                 },
                 "lora": {
-                    **_lora_array_schema("按实际需求用 comfyui_lookup 查询并选用 LoRA，传对象数组，可附推荐 strength。按工作流映射顺序覆盖可选槽位，独立加速 LoRA 保留。省略沿用工作流，空数组关闭可选 LoRA；旧版字符串调用仍兼容"),
+                    **_lora_array_schema("按实际需求用 comfyui_lookup 查询并选用 LoRA，传对象数组，可附推荐 strength，并带上已知触发词。按工作流映射顺序覆盖可选槽位，独立加速 LoRA 保留。省略沿用工作流，空数组关闭可选 LoRA；旧版字符串调用仍兼容"),
                 },
                 "size": {
                     "type": "string",
@@ -81,13 +82,13 @@ class ComfyuiDrawTool(FunctionTool[AstrAgentContext]):
                 },
                 "aspect_ratio": {
                     "type": "string",
-                    "description": "分辨率选择器支持时设置画幅比例，例如 1:1、16:9；用户没指定时沿用工作流",
+                    "description": "设置画幅比例，例如 1:1、16:9；有分辨率选择器时写入选择器，否则按当前画布像素量换算宽高；用户没指定时沿用工作流",
                 },
                 "megapixels": {
                     "type": "number",
                     "minimum": 0.1,
                     "maximum": 64,
-                    "description": "分辨率选择器支持时设置目标 MP，例如 1.0 MP；Qwen Image 2.1 原生 2K 方图约 4.0 MP。用户没指定时沿用工作流",
+                    "description": "设置目标百万像素数，例如 1.0；无分辨率选择器时按当前画幅比例换算宽高（Qwen Image 2.1 原生 2K 方图约 4.0）。用户没指定时沿用工作流",
                 },
                 "artist": {
                     "type": "string",
@@ -103,7 +104,7 @@ class ComfyuiDrawTool(FunctionTool[AstrAgentContext]):
                 },
                 "trigger_words": {
                     "type": "string",
-                    "description": "所选 LoRA 的已知触发词，从 lookup/model_info 返回值或用户提供的信息中取用，保留原始格式，多个用逗号分隔。选用 LoRA 时可同步填写，无需用户另外提出；查询未提供时可省略并继续使用 LoRA",
+                    "description": "使用 LoRA 时应同步填写其已知触发词，包括沿用工作流内置的 LoRA，无需用户另外提出。从 lookup/civitai_search 返回值或用户提供的信息中取用，保留原始格式，多个用逗号分隔；没有独立触发词映射时写入 prompt，已有生效触发词不重复添加。查询仍未提供时不编造，可省略并继续使用 LoRA",
                 },
                 "steps": {
                     "type": "number",
@@ -302,8 +303,12 @@ class ComfyuiDrawTool(FunctionTool[AstrAgentContext]):
         ) and not slots.get("size"):
             return f"工作流「{workflow_name}」没有映射画面大小槽位，无法修改画幅。"
         for role in ("aspect_ratio", "megapixels"):
-            if values.get(role) not in (None, "") and not slots.get(role):
-                return f"工作流「{workflow_name}」没有映射 {role} 输入，无法修改分辨率选择器。"
+            if (
+                values.get(role) not in (None, "")
+                and not slots.get(role)
+                and not slots.get("size")
+            ):
+                return f"工作流「{workflow_name}」没有映射 {role} 输入或画面大小槽位，无法修改画幅比例。"
 
         seed = values.get("seed")
         if seed is None:

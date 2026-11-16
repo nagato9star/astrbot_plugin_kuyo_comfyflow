@@ -41,8 +41,6 @@ from .comfyflow.tools import (  # noqa: E402
     ComfyuiCivitaiSearchTool,
     ComfyuiFreeMemoryTool,
     ComfyuiJobTool,
-    ComfyuiModelInfoTool,
-    ComfyuiNodesTool,
     ComfyuiRecipeTool,
     ComfyuiRecipeDrawTool,
     ComfyuiSystemStatsTool,
@@ -54,6 +52,7 @@ from .comfyflow.tools import (  # noqa: E402
 )
 from .comfyflow.workflows.builder import WorkflowBuilder  # noqa: E402
 from .comfyflow.workflows.registry import EditWorkflowRegistry, ModelFamilyRegistry, WorkflowProfileStore  # noqa: E402
+from .comfyflow.workflows.slots import detect_slots, merge_slots  # noqa: E402
 from .comfyflow.storage.recipes import RecipeStore  # noqa: E402
 
 
@@ -312,11 +311,9 @@ class ComfyUIDirectPlugin(Star):
             self._recipe_draw_tool,
             self._lookup_tool,
             ComfyuiCivitaiSearchTool(client=self._civitai),
-            ComfyuiModelInfoTool(client=self._client, civitai=self._civitai),
             ComfyuiJobTool(client=self._client, shared=shared, output_dir=self._output_dir),
             ComfyuiSystemStatsTool(client=self._client),
             ComfyuiFreeMemoryTool(client=self._client),
-            ComfyuiNodesTool(client=self._client),
             ComfyuiValidateWorkflowTool(client=self._client),
             ComfyuiUploadFileTool(client=self._client),
             recipe_tool,
@@ -395,6 +392,7 @@ class ComfyUIDirectPlugin(Star):
             loaded[workflow] = wf
             configured = node_slots_cfg if workflow == self._builder.default_workflow else None
             self._profiles.ensure(workflow, wf, configured)
+            self._heal_profile_slots(workflow, wf)
 
         recipe_defaults = dict(defaults)
         raw_lora = defaults.get("lora")
@@ -423,6 +421,27 @@ class ComfyUIDirectPlugin(Star):
                 config_defaults=recipe_defaults,
                 family=first_family.name,
             )
+
+    def _heal_profile_slots(self, workflow: str, wf: dict) -> None:
+        """旧档案缺少新识别出的槽位时补齐一次；手动映射保持逐槽位优先。"""
+        saved = self._profiles.get(workflow)
+        if not saved:
+            return
+        saved_slots = saved.get("slots") or {}
+        try:
+            merged = merge_slots(detect_slots(wf), saved_slots)
+        except Exception:
+            return
+        new_roles = sorted(role for role in merged if role not in saved_slots)
+        if not new_roles:
+            return
+        try:
+            self._profiles.save(workflow, merged, saved.get("drop_nodes") or [])
+            logger.info(
+                f"[ComfyUIDirect] 工作流「{workflow}」档案补齐新识别槽位: {new_roles}"
+            )
+        except (OSError, ValueError) as e:
+            logger.warning(f"[ComfyUIDirect] 补齐工作流档案失败 {workflow}: {e}")
 
     @staticmethod
     def _cache_limit(value: Any, default: int) -> int:
