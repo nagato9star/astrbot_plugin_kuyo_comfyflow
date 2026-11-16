@@ -541,6 +541,12 @@ class ComfyUIClient:
                     number = 0
                 if isinstance(prompt[2], dict):
                     wf = prompt[2]
+            images = [
+                str(img.get("filename"))
+                for out in (entry.get("outputs") or {}).values()
+                for img in (out.get("images") or [])
+                if isinstance(img, dict) and img.get("filename")
+            ]
             rows.append(
                 {
                     "prompt_id": pid,
@@ -548,6 +554,7 @@ class ComfyUIClient:
                     "status": (entry.get("status") or {}).get("status_str") or "",
                     "workflow": wf,
                     "has_workflow": isinstance(wf, dict) and bool(wf),
+                    "images": images,
                 }
             )
         rows.sort(key=lambda r: r.get("number") or 0, reverse=True)

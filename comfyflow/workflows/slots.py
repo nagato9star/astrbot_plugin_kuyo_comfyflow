@@ -48,8 +48,8 @@ SLOT_HELP: dict[str, str] = {
     "source_images": "多参考图工作流的 LoadImage 节点，按节点顺序对应 images.image_1、images.image_2 等输入。",
     "resolution": "编辑分辨率输入；也可复用画面大小槽位，按参考图宽高比写入 EmptyLatentImage.width/height。0 保留原始尺寸。",
     "custom_size": "编辑工作流的 custom_size 开关；开启时由工作流使用分辨率选择器画布。",
-    "aspect_ratio": "T2I 分辨率选择器的比例输入，例如 1:1、16:9。",
-    "megapixels": "T2I 分辨率选择器的目标百万像素数，例如 1.0；Qwen Image 2.1 的 2K 方图约为 4.0。",
+    "aspect_ratio": "T2I 分辨率选择器的比例输入，例如 1:1、16:9；没有该节点时按画面大小槽位换算宽高。",
+    "megapixels": "T2I 分辨率选择器的目标百万像素数，例如 1.0；没有该节点时按画面大小槽位换算宽高。",
     "model": "这套默认用哪颗底模。用户说换模型时也写到这里。",
     "loras": "这套默认挂哪些 LoRA。用户点名 LoRA 时覆盖这里。",
     "size": "生图时写入宽高；编辑时可按参考图比例把 resolution 换算后写入 EmptyLatentImage.width/height。",
@@ -872,6 +872,11 @@ def detect_slots(wf: dict, object_info: dict | None = None) -> dict[str, dict]:
         slots["loras"] = _slot(lora_id, wf, "loras")
 
     size_id = _unique_class_on_path(wf, latent_roots, SLOT_CLASS_HINTS["size"]) if graph_bound else _first_class(scoped, SLOT_CLASS_HINTS["size"])
+    if size_id is None:
+        # latent 输入名不在常见字段或链路缺失时，全图唯一画布节点兜底
+        size_candidates = [nid for nid, n in scoped.items() if n.get("class_type") in SLOT_CLASS_HINTS["size"]]
+        if len(size_candidates) == 1:
+            size_id = size_candidates[0]
     if size_id:
         slots["size"] = _slot(size_id, wf, "size")
 
@@ -1314,6 +1319,86 @@ def resolve_size(
     return w, h
 
 
+_RATIO_PATTERN = re.compile(r"(\d+(?:\.\d+)?)\s*[:x×/]\s*(\d+(?:\.\d+)?)")
+
+
+def _ratio_from_text(raw: Any) -> float:
+    """把 '16:9' / '4x3' / '3/2' / '1.78' 解析为正的宽高比。"""
+    if isinstance(raw, bool):
+        raise ValueError("aspect_ratio 格式无效，应为 宽:高（如 16:9）或正数")
+    if isinstance(raw, (int, float)):
+        ratio = float(raw)
+    else:
+        text = str(raw or "").strip()
+        if not text:
+            raise ValueError("aspect_ratio 必须是非空字符串")
+        match = _RATIO_PATTERN.fullmatch(text)
+        try:
+            ratio = float(match.group(1)) / float(match.group(2)) if match else float(text)
+        except (TypeError, ValueError) as e:
+            raise ValueError("aspect_ratio 格式无效，应为 宽:高（如 16:9）或正数") from e
+    if not math.isfinite(ratio) or ratio <= 0:
+        raise ValueError("aspect_ratio 必须是正数比例")
+    return ratio
+
+
+def _fold_ratio_into_size(wf: dict, slots: dict, values: dict) -> None:
+    """无专用分辨率选择器时，把 aspect_ratio/megapixels 请求换算成画布宽高。
+
+    MOSS、Anima 等家族没有分辨率选择器节点，但都有画面大小槽位；
+    这里按选择器语义折算：比例决定形状，MP（缺省沿用当前画布像素量）决定大小。
+    已被换算消费的角色会从 values 中移除，剩余的交给专用槽位写入。
+    """
+    ratio_raw = values.get("aspect_ratio")
+    mp_raw = values.get("megapixels")
+    need_ratio = ratio_raw not in (None, "") and not slots.get("aspect_ratio")
+    need_mp = mp_raw not in (None, "") and not slots.get("megapixels")
+    if not need_ratio and not need_mp:
+        return
+    size_spec = slots.get("size")
+    if not size_spec:
+        missing = "aspect_ratio" if need_ratio else "megapixels"
+        raise ValueError(f"工作流未映射 {missing} 输入，请先在工作台保存节点映射")
+    size_node = wf.get(str(size_spec.get("node") or "")) or {}
+    ins = size_node.get("inputs") or {}
+    cur_w = values.get("width") if isinstance(values.get("width"), (int, float)) else ins.get("width")
+    cur_h = values.get("height") if isinstance(values.get("height"), (int, float)) else ins.get("height")
+    cur_ok = (
+        isinstance(cur_w, (int, float)) and isinstance(cur_h, (int, float))
+        and not isinstance(cur_w, bool) and not isinstance(cur_h, bool)
+        and cur_w > 0 and cur_h > 0
+    )
+
+    if ratio_raw not in (None, ""):
+        ratio = _ratio_from_text(ratio_raw)
+    elif cur_ok:
+        ratio = float(cur_w) / float(cur_h)
+    else:
+        ratio = 1.0
+    if mp_raw not in (None, ""):
+        try:
+            mp = float(mp_raw)
+        except (TypeError, ValueError) as e:
+            raise ValueError("megapixels 必须是数字") from e
+        if not math.isfinite(mp) or not 0.1 <= mp <= 64:
+            raise ValueError("megapixels 必须在 0.1 到 64 之间")
+        area = mp * 1_000_000.0
+    elif cur_ok:
+        area = float(cur_w) * float(cur_h)
+    else:
+        area = 1_048_576.0
+
+    # Flux 系画布按 16 对齐，其余按 ComfyUI 常规的 8 对齐
+    snap = 16 if "flux" in str(size_node.get("class_type") or "").casefold() else 8
+    width = min(8192, max(64, int(round(math.sqrt(area * ratio) / snap)) * snap))
+    height = min(8192, max(64, int(round(math.sqrt(area / ratio) / snap)) * snap))
+    values["width"], values["height"] = width, height
+    if need_ratio:
+        values.pop("aspect_ratio", None)
+    if need_mp:
+        values.pop("megapixels", None)
+
+
 def source_image_slots(wf: dict, slots: Any) -> list[dict]:
     """Resolve ordered image mappings without silently dropping or reordering ports."""
     if not isinstance(slots, dict):
@@ -1346,6 +1431,30 @@ def source_image_slots(wf: dict, slots: Any) -> list[dict]:
     return result
 
 
+def _artist_core(text: str) -> str:
+    """取画师串的可比较核心：去掉 (@名字:1.2) 这类外层权重写法。"""
+    t = text.strip()
+    m = re.fullmatch(r"\(\s*(@.*?)\s*:\s*[\d.]+\s*\)", t)
+    return m.group(1).strip() if m else t
+
+
+def _merge_artist_into_prompt(prompt: str, artist: str) -> tuple[str, bool]:
+    """工作流没有画师槽位时，把画师串并入正面提示词。
+
+    已经出现过同名画师就不再重复追加；返回 (新提示词, 是否发生合并)。
+    """
+    a = artist.strip()
+    if not a:
+        return prompt, False
+    p = prompt.strip()
+    core = _artist_core(a)
+    if core and core in p:
+        return prompt, False
+    if not p:
+        return a, True
+    return f"{p}, {a}", True
+
+
 def apply_slots(
     wf: dict,
     slots: dict[str, Any],
@@ -1374,6 +1483,12 @@ def apply_slots(
                 )
 
     prompt = values.get("prompt")
+    artist_value = values.get("artist")
+    if prompt is not None and artist_value and not slots.get("artist"):
+        merged_prompt, merged = _merge_artist_into_prompt(str(prompt), str(artist_value))
+        if merged:
+            prompt = merged_prompt
+            logger.info("[slot_mapping] 工作流没有映射画师槽位，画师串已并入正面提示词")
     if prompt is not None and slots.get("prompt"):
         _write_text(wf, slots["prompt"], str(prompt), role="prompt")
 
@@ -1439,6 +1554,8 @@ def apply_slots(
                 node.setdefault("inputs", {})["strength"] = float(guidance)
             except (TypeError, ValueError):
                 pass
+
+    _fold_ratio_into_size(wf, slots, values)
 
     for role in ("resolution", "custom_size", "aspect_ratio", "megapixels"):
         value = values.get(role)

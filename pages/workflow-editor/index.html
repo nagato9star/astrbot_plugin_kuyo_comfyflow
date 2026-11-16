@@ -4,46 +4,30 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Kuyo ComfyFlow · 工作流与配方</title>
-<link rel="stylesheet" href="./graph-editor.bundle.css?v=canvas-3" />
-<link rel="stylesheet" href="./style.css?v=canvas-3" />
+<link rel="stylesheet" href="./graph-editor.bundle.css?v=comfy-1" />
+<link rel="stylesheet" href="./style.css?v=comfy-1" />
 </head>
 <body>
   <header id="topbar">
-    <div class="brand">
-      <span class="mark">◆</span>
-      Kuyo ComfyFlow
-      <span class="sub">工作流 / 配方</span>
-    </div>
+    <div class="brand">Kuyo ComfyFlow</div>
+    <div class="spacer"></div>
     <span id="conn-dot" class="dot wait"></span>
     <span id="conn-text">检测中…</span>
     <span id="gpu-text" class="dim"></span>
-    <div class="spacer"></div>
     <button id="btn-refresh" type="button">刷新连接</button>
   </header>
 
   <main id="layout">
     <aside class="rail" id="rail-left">
-      <section class="howto">
-        <h2>对机器人怎么说</h2>
-        <ul class="say-list">
-          <li>用 anima 家族画一个街上的女孩</li>
-          <li>用「立绘」配方画成全身</li>
-          <li>用 krea2 家族自由画一张照片</li>
-          <li>加上 zoda 的 lora</li>
-          <li>画师用 xxx</li>
-          <li>把这套记住，叫「日常」</li>
-        </ul>
-      </section>
       <section>
         <div class="sec-head">
           <h2>工作流图</h2>
           <div class="sec-actions">
-            <label class="file-btn">导入图<input id="file-import" type="file" accept=".json,application/json" /></label>
-            <button id="btn-from-comfy" type="button" title="把 ComfyUI 最近画过的那张图拿过来">刚画过的</button>
+            <label class="file-btn">导入<input id="file-import" type="file" accept=".json,application/json" /></label>
+            <button id="btn-from-comfy" type="button" title="导入 ComfyUI 最近一次生成的工作流">刚画过的</button>
           </div>
         </div>
         <ul id="wf-list" class="pick-list"></ul>
-        <p class="hint">支持 ComfyUI API JSON；连接 ComfyUI 后也可导入前端工作流 JSON，插件会按节点信息转换。</p>
       </section>
       <section>
         <div class="sec-head">
@@ -61,18 +45,17 @@
       </div>
 
       <div id="workflow-pane" role="tabpanel" aria-labelledby="tab-workflow">
-        <p id="empty-guide" class="callout">先导入工作流，再选择生图家族或独立编辑路由，核对节点映射并保存。</p>
         <div class="workflow-card">
           <div class="workflow-title"><span>当前工作流</span><strong id="workflow-active-name">尚未选择</strong><span id="workflow-active-source" class="workflow-source"></span></div>
           <div class="workflow-routing">
             <label class="field"><span>用途</span><select id="workflow-purpose"><option value="generate">生图</option><option value="edit">编辑图</option></select></label>
             <label class="field grow" id="workflow-family-wrap"><span>生图家族</span><select id="workflow-family"></select></label>
-            <label class="field grow" id="workflow-edit-route-wrap" hidden><span>编辑路由名</span><input id="workflow-edit-route" list="workflow-edit-route-options" placeholder="如 qwen-edit" /><datalist id="workflow-edit-route-options"></datalist><small>可选已有路由，也可输入新名称；无需创建生图家族</small></label>
-            <label class="field grow" id="workflow-edit-description-wrap" hidden><span>用途说明</span><input id="workflow-edit-description" placeholder="例如：Qwen 图片转真人风格" /><small>有多个编辑路由时，帮助 LLM 选对工作流</small></label>
+            <label class="field grow" id="workflow-edit-route-wrap" hidden><span>编辑路由名</span><input id="workflow-edit-route" list="workflow-edit-route-options" placeholder="如 qwen-edit" /><datalist id="workflow-edit-route-options"></datalist></label>
+            <label class="field grow" id="workflow-edit-description-wrap" hidden><span>用途说明</span><input id="workflow-edit-description" placeholder="例如：Qwen 图片转真人风格" /></label>
             <button id="btn-bind-workflow" class="primary" type="button">绑定当前工作流</button>
             <button id="btn-unbind-edit" type="button" hidden>解除编辑绑定</button>
           </div>
-          <p id="workflow-bind-status" class="hint">工作流和节点映射独立管理；绑定不会修改任何配方。</p>
+          <p id="workflow-bind-status" class="hint"></p>
         </div>
 
         <section id="graph-editor-panel" class="graph-editor-panel">
@@ -98,24 +81,21 @@
             <div class="graph-stage">
               <div class="graph-canvas-frame"><canvas id="workflow-canvas" tabindex="0"></canvas></div>
               <div class="graph-footer"><span id="graph-status">等待工作流</span><span id="graph-run-status"></span></div>
-              <div class="graph-run-result"><div id="graph-preview" class="preview empty">运行结果会显示在这里</div></div>
+              <div class="graph-run-result"><div id="graph-preview" class="preview empty"></div></div>
             </div>
             <aside id="graph-inspector" class="graph-inspector">
               <h3>节点参数</h3>
               <div id="graph-inspector-content" class="graph-inspector-content">点击节点查看参数。</div>
             </aside>
           </div>
-          <p class="hint">拖入或点击左侧节点添加节点；拖动节点、连接端口并在右侧编辑参数。画布与可提交的 API 工作流会一起缓存、保存。</p>
         </section>
 
         <div class="sec-head"><h3>节点映射</h3><div class="sec-actions"><button id="btn-detect-slots" type="button">重新识别</button><button id="btn-save-profile" type="button">保存映射</button></div></div>
-        <p class="hint">映射属于当前工作流。重新识别只更新页面建议；核对后保存。配置页手动映射仍优先。</p>
         <div id="slot-grid" class="slot-grid"></div>
         <details id="slot-extra" class="extra"><summary>更多节点（来源图片 / 画师 / 负向 / 触发词）</summary><div id="slot-grid-extra" class="slot-grid"></div></details>
 
         <details id="workflow-json-editor" class="workflow-json-editor">
           <summary>编辑工作流 API JSON</summary>
-          <p class="hint">直接修改当前模板的 API JSON。保存后请重新核对节点映射；已有配方内容保持独立。</p>
           <textarea id="workflow-json" spellcheck="false" aria-label="工作流 API JSON"></textarea>
           <div class="row-actions"><button id="btn-save-workflow-json" type="button">保存工作流 JSON</button></div>
         </details>
@@ -130,7 +110,6 @@
         </div>
         <label class="field"><span>模型家族</span><select id="recipe-family"></select><small id="family-workflow-hint" class="hint"></small></label>
         <h3>静态生成参数</h3>
-        <p class="hint">这里仅保存底模、LoRA、画幅和采样参数。家族工作流与节点映射由“工作流”页管理。</p>
       <div class="size-presets">
         <span>常用画幅</span>
         <button type="button" data-size="832,1216">竖图 832×1216</button>
@@ -177,7 +156,6 @@
           <button id="btn-add-lora" type="button">添加一条</button>
         </div>
         <div id="lora-list"></div>
-        <p class="hint">选好 LoRA 后，下面的触发词会按清单自动填，可再改。</p>
         <label class="field">
           <span>LoRA 触发词</span>
           <textarea id="def-trigger-words" rows="2" placeholder="选 LoRA 后自动填入触发词"></textarea>
@@ -200,7 +178,7 @@
           <button id="btn-run" class="primary" type="button">画一张看看</button>
           <button id="btn-stop" type="button">停</button><button id="btn-resume" type="button" hidden>继续等待</button>
         </div>
-        <div id="preview" class="preview empty">还没试过</div>
+        <div id="preview" class="preview empty"></div>
       </section>
       <section>
         <h2>刚才画的</h2>
@@ -216,6 +194,6 @@
       <div id="init-text">正在打开工作台…</div>
     </div>
   </div>
-  <script type="module" src="./app.js?v=canvas-3"></script>
+  <script type="module" src="./app.js?v=comfy-1"></script>
 </body>
 </html>

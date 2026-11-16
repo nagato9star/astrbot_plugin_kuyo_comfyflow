@@ -735,6 +735,8 @@ class StudioApi:
             if error:
                 return _json({"ok": False, "error": error}, 400)
         if body.get("size"):
+            if str(body.get("size")).strip().lower() != "same" and not slots.get("size"):
+                return _json({"ok": False, "error": f"工作流「{tname}」未映射画面大小槽位，无法修改画幅"}, 400)
             values["width"], values["height"] = resolve_size(
                 int(values["width"]) if values.get("width") else None,
                 int(values["height"]) if values.get("height") else None,

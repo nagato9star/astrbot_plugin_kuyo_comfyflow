@@ -551,6 +551,7 @@ def test_family_and_recipe_generation_paths() -> None:
 
     class FakeClient(ComfyUIClient):
         timeout = 1
+        request_timeout = 1
 
         def __init__(self):
             self.submitted = []
@@ -712,6 +713,7 @@ def test_qwen_edit_upload_and_output_path() -> None:
             self.uploads = []
             self.submitted = []
             self.timeout = 1
+            self.request_timeout = 1
 
         async def upload_image(self, filename, content):
             self.uploads.append((filename, content))

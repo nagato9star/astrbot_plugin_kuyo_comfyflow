@@ -62,6 +62,7 @@ def _short_file(name: str) -> str:
 # 模型家族启发式：从底模文件名猜结构系（CLIP/引导/分辨率档是否通用）。
 # 顺序即优先级——先匹配具体家族关键词，再落宽泛的 sdxl/sd15。
 _FAMILY_KEYWORDS: tuple[tuple[str, str], ...] = (
+    ("moss", "moss"),
     ("krea", "krea"),
     ("qwen", "qwen"),
     ("flux", "flux"),

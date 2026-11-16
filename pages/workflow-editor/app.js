@@ -1,22 +1,22 @@
 const SLOT_FALLBACK = [
   { id: "prompt", label: "用户要画的内容", help: "必选", basic: true },
-  { id: "source_image", label: "编辑来源图片", help: "图片编辑工作流中的 LoadImage 节点", basic: false },
-  { id: "source_images", label: "编辑参考图输入（多选）", help: "按节点列表顺序填入所选图片；行内标记显示节点连接的 Qwen 输入口，可用上/下调整图片对应关系", basic: false },
-  { id: "resolution", label: "编辑输出分辨率", help: "Qwen Image 2.1 编辑 resolution 输入；0 保留参考图尺寸", basic: false },
-  { id: "custom_size", label: "编辑自定义画布", help: "custom_size 开关；启用后使用分辨率选择器画布", basic: false },
+  { id: "source_image", label: "编辑来源图片", help: "LoadImage 节点", basic: false },
+  { id: "source_images", label: "编辑参考图输入（多选）", help: "按顺序对应工作流的参考图输入", basic: false },
+  { id: "resolution", label: "编辑输出分辨率", help: "0 保留参考图尺寸", basic: false },
+  { id: "custom_size", label: "编辑自定义画布", help: "custom_size 开关", basic: false },
   { id: "model", label: "底模", help: "", basic: true },
   { id: "loras", label: "LoRA", help: "", basic: true },
   { id: "size", label: "画面大小", help: "", basic: true },
-  { id: "aspect_ratio", label: "分辨率选择器画幅比例", help: "例如 1:1、16:9", basic: false },
-  { id: "megapixels", label: "分辨率选择器目标 MP", help: "例如 1.0；Qwen Image 2.1 2K 方图约 4.0", basic: false },
+  { id: "aspect_ratio", label: "画幅比例", help: "例如 1:1、16:9", basic: false },
+  { id: "megapixels", label: "目标 MP", help: "例如 1.0", basic: false },
   { id: "sampler", label: "出图采样", help: "必选", basic: true },
   { id: "negative", label: "不要出现的东西", help: "", basic: false },
   { id: "artist", label: "画师风格", help: "", basic: false },
   { id: "quality", label: "画质词", help: "", basic: false },
   { id: "trigger_words", label: "LoRA 触发词", help: "", basic: false },
-  { id: "clip", label: "文本编码器(CLIP)", help: "Flux/Krea/Qwen 等独立 CLIP 的模型才需要", basic: false },
-  { id: "vae", label: "VAE", help: "模型用独立 VAE 时才需要", basic: false },
-  { id: "guidance", label: "引导强度(Flux)", help: "FluxGuidance 之类的节点", basic: false },
+  { id: "clip", label: "文本编码器(CLIP)", help: "独立 CLIP 模型才需要", basic: false },
+  { id: "vae", label: "VAE", help: "独立 VAE 才需要", basic: false },
+  { id: "guidance", label: "引导强度(Flux)", help: "", basic: false },
 ];
 
 const state = {
@@ -292,8 +292,6 @@ function renderSlots() {
         && state.profileSlots.source_images.length) continue;
     renderSlotSelect(role, role.basic === false ? extra || basic : basic);
   }
-  const guide = $("#empty-guide");
-  if (guide) guide.classList.toggle("hidden", !!(state.activeWorkflow || state.templates.length));
 }
 
 function loraTriggerWords(name) {
