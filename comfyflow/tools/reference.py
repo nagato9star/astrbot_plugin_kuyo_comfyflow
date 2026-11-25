@@ -330,22 +330,109 @@ def _truncate(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n] + "…"
 
 
+def _meta_first(meta: dict, *keys: str) -> Any:
+    for key in keys:
+        val = meta.get(key)
+        if val not in (None, ""):
+            return val
+    return None
+
+
+def _has_recipe_meta(item: dict) -> bool:
+    meta = item.get("meta")
+    if not isinstance(meta, dict) or not meta:
+        return False
+    return any(
+        _meta_first(meta, *keys) is not None
+        for keys in (
+            ("prompt", "Prompt"),
+            ("sampler", "Sampler"),
+            ("steps", "Steps"),
+            ("cfgScale", "CFG scale", "cfg"),
+            ("seed", "Seed"),
+            ("Model", "model"),
+        )
+    )
+
+
+def _civitai_model_label(item: dict, meta: dict) -> str:
+    raw = str(_meta_first(meta, "Model", "model") or "").strip()
+    is_air = raw.startswith("urn:air:")
+    model = "" if is_air else raw
+    if not model:
+        for res in meta.get("civitaiResources") or meta.get("resources") or []:
+            if not isinstance(res, dict):
+                continue
+            if str(res.get("type") or "").casefold() in {"checkpoint", "model"}:
+                name = str(
+                    res.get("modelName") or res.get("name") or res.get("modelVersionName") or ""
+                ).strip()
+                if name:
+                    model = name
+                    break
+    if not model:
+        model = str(item.get("modelName") or "").strip() or raw
+    base = str(item.get("baseModel") or meta.get("baseModel") or "").strip()
+    if not model:
+        return base or "未知模型"
+    if base and base.casefold() not in model.casefold():
+        return f"{model}（{base}）"
+    return model
+
+
+def _civitai_lora_summary(meta: dict) -> str:
+    loras: list[str] = []
+    for res in meta.get("civitaiResources") or meta.get("resources") or []:
+        if not isinstance(res, dict):
+            continue
+        if str(res.get("type") or "").casefold() != "lora":
+            continue
+        name = str(
+            res.get("modelName") or res.get("name") or res.get("modelVersionName") or res.get("modelVersionId") or ""
+        ).strip()
+        if not name:
+            continue
+        weight = res.get("weight")
+        loras.append(f"{name}({weight})" if weight is not None else name)
+        if len(loras) >= 4:
+            break
+    return ", ".join(loras)
+
+
 def _civitai_image_recipe_lines(item: dict, index: int) -> list[str]:
     """一张 civitai 示例图的生成配方（含版本 id，便于下钻）。"""
-    meta = item.get("meta") or {}
-    model = meta.get("Model") or meta.get("model") or item.get("modelName") or "未知模型"
+    meta = item.get("meta") if isinstance(item.get("meta"), dict) else {}
+    model = _civitai_model_label(item, meta)
     lines = [f"[{index}] 模型: {model}"]
-    if meta.get("prompt"):
-        lines.append(f"prompt: {_truncate(meta['prompt'], 400)}")
-    if meta.get("negativePrompt"):
-        lines.append(f"负向: {_truncate(meta['negativePrompt'], 200)}")
-    sampler = meta.get("sampler") or "?"
-    steps = meta.get("steps") or "?"
-    cfg = meta.get("cfgScale") or "?"
-    seed = meta.get("seed") or "?"
-    lines.append(f"sampler/steps/cfg/seed: {sampler} / {steps} / {cfg} / {seed}")
-    if item.get("modelVersionId"):
-        lines.append(f"model_version_id={item['modelVersionId']}")
+    prompt = _meta_first(meta, "prompt", "Prompt")
+    if prompt:
+        lines.append(f"prompt: {_truncate(prompt, 400)}")
+    neg = _meta_first(meta, "negativePrompt", "Negative prompt", "negative_prompt")
+    if neg:
+        lines.append(f"负向: {_truncate(neg, 200)}")
+    lora_text = _civitai_lora_summary(meta)
+    if lora_text:
+        lines.append(f"LoRA: {lora_text}")
+    sampler = _meta_first(meta, "sampler", "Sampler")
+    steps = _meta_first(meta, "steps", "Steps")
+    cfg = _meta_first(meta, "cfgScale", "CFG scale", "cfg")
+    seed = _meta_first(meta, "seed", "Seed")
+    if any(v is not None for v in (sampler, steps, cfg, seed)):
+        lines.append(
+            f"sampler/steps/cfg/seed: {sampler if sampler is not None else '?'} / "
+            f"{steps if steps is not None else '?'} / "
+            f"{cfg if cfg is not None else '?'} / "
+            f"{seed if seed is not None else '?'}"
+        )
+    elif not meta:
+        lines.append("配方参数: 原图未附带生成参数")
+    vid = item.get("modelVersionId")
+    vids = item.get("modelVersionIds")
+    if vid:
+        lines.append(f"model_version_id={vid}")
+    elif isinstance(vids, list) and vids:
+        extra = f" (关联版本: {', '.join(str(x) for x in vids[:5])})" if len(vids) > 1 else ""
+        lines.append(f"model_version_id={vids[0]}{extra}")
     if item.get("url"):
         lines.append(f"图: {item['url']}")
     return lines
@@ -424,15 +511,100 @@ class ComfyuiCivitaiSearchTool(FunctionTool[AstrAgentContext]):
         except (TypeError, ValueError):
             return None
 
+    @staticmethod
+    def _filter_version_images(version: dict | None, nsfw: bool, model_name: str = "") -> list[dict]:
+        if not isinstance(version, dict):
+            return []
+        images = version.get("images") or []
+        if not nsfw:
+            images = [
+                img for img in images
+                if int(img.get("nsfwLevel") or 1) <= 1 and not img.get("nsfw")
+            ]
+        m_name = model_name or (version.get("model") or {}).get("name") or ""
+        base_model = version.get("baseModel") or ""
+        vid = version.get("id")
+        enriched: list[dict] = []
+        for img in images:
+            if not isinstance(img, dict):
+                continue
+            row = dict(img)
+            if vid and not row.get("modelVersionId"):
+                row["modelVersionId"] = vid
+            if m_name and not row.get("modelName"):
+                row["modelName"] = m_name
+            if base_model and not row.get("baseModel"):
+                row["baseModel"] = base_model
+            enriched.append(row)
+        return enriched
+
+    @staticmethod
+    def _pick_recipe_images(items: list[dict], limit: int) -> list[dict]:
+        seen: set[str] = set()
+        with_meta: list[dict] = []
+        without_meta: list[dict] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            dedup_key = str(item.get("id") or item.get("url") or id(item))
+            if dedup_key in seen:
+                continue
+            seen.add(dedup_key)
+            if _has_recipe_meta(item):
+                with_meta.append(item)
+            else:
+                without_meta.append(item)
+        return (with_meta + without_meta)[:limit]
+
     async def _images(self, query: str, kwargs: dict, limit: int, nsfw: bool) -> str:
         sort = _civitai_norm_sort(kwargs.get("sort"), _CIVITAI_IMAGE_SORTS, "Most Reactions")
         period = _civitai_norm_period(kwargs.get("period"))
         model_id = self._int_or_none(kwargs.get("model_id"))
         version_id = self._int_or_none(kwargs.get("model_version_id"))
-        items = await self.client.search_images(
-            query, limit=limit, nsfw=nsfw, sort=sort, period=period,
-            model_id=model_id, model_version_id=version_id,
-        )
+        items: list[dict] = []
+        if model_id is not None or version_id is not None:
+            items = await self.client.search_images(
+                query, limit=min(max(limit * 3, 12), 20), nsfw=nsfw, sort=sort, period=period,
+                model_id=model_id, model_version_id=version_id,
+            )
+            if version_id is not None and not any(_has_recipe_meta(x) for x in items):
+                v = await self.client.get_model_version(version_id)
+                v_imgs = self._filter_version_images(v, nsfw)
+                if v_imgs:
+                    items = v_imgs + items
+        else:
+            # Civitai /api/v1/images ignores free-text `search`; resolve via matching models first.
+            base_models = _civitai_base_models(kwargs)
+            models = await self.client.search_models(
+                query, limit=min(max(limit, 3), 5), sort="Highest Rated",
+                period=period, base_models=base_models, nsfw=nsfw,
+            )
+            for m in models[:4]:
+                versions = m.get("modelVersions") or []
+                v0 = versions[0] if versions and isinstance(versions[0], dict) else None
+                vid = self._int_or_none(v0.get("id") if v0 else None)
+                if vid is None:
+                    continue
+                m_name = str(m.get("name") or "")
+                b_model = str(v0.get("baseModel") or "")
+                batch = await self.client.search_images(
+                    "", limit=min(max(limit * 2, 6), 12), nsfw=nsfw,
+                    sort=sort, period=period, model_version_id=vid,
+                )
+                for img in batch:
+                    row = dict(img)
+                    row.setdefault("modelName", m_name)
+                    if b_model and not row.get("baseModel"):
+                        row["baseModel"] = b_model
+                    if not row.get("modelVersionId"):
+                        row["modelVersionId"] = vid
+                    items.append(row)
+                if not any(_has_recipe_meta(x) for x in batch):
+                    v_detail = await self.client.get_model_version(vid)
+                    items.extend(self._filter_version_images(v_detail, nsfw, model_name=m_name))
+                if sum(1 for x in items if _has_recipe_meta(x)) >= limit:
+                    break
+        items = self._pick_recipe_images(items, limit)
         if not items:
             return f"civitai 未找到相关图片：{query or f'version {version_id}'}"
         scope = f"搜索: {query}" if query else f"版本 {version_id or model_id} 的示例图"
@@ -689,12 +861,23 @@ class ComfyuiLookupTool(FunctionTool[AstrAgentContext]):
             if kind == "copyright" and source not in {"auto", "animadex"}:
                 return "作品系列查询请使用 source=animadex。"
             return await lookup_animadex(self.animadex, kind, query, kwargs.get("page", 1))
-        if source == "auto" and kind == "character" and not detail:
-            if self.character_lookup is not None:
+        if source == "auto" and kind == "character":
+            if not detail:
+                if self.character_lookup is not None:
+                    limit = max(1, page_number(kwargs.get("limit"), 5, 8))
+                    return format_character_result(await self.character_lookup.lookup(query, limit))
+                if self.animadex is not None:
+                    return await lookup_animadex(self.animadex, kind, query, kwargs.get("page", 1))
+            elif self.character_lookup is not None and any(ord(c) > 127 for c in query):
                 limit = max(1, page_number(kwargs.get("limit"), 5, 8))
-                return format_character_result(await self.character_lookup.lookup(query, limit))
-            if self.animadex is not None:
-                return await lookup_animadex(self.animadex, kind, query, kwargs.get("page", 1))
+                resolved = await self.character_lookup.lookup(query, limit)
+                if resolved.get("exact") and resolved.get("total") == 1 and resolved.get("matches"):
+                    query = resolved["matches"][0]["tag"]
+                elif resolved.get("matches"):
+                    return (
+                        format_character_result(resolved)
+                        + "\n提示：请用以上英文角色 tag 重新查询（detail=true）以统计作品常用标签。"
+                    )
         return await lookup_booru(
             self.danbooru, self.gelbooru, kind, query,
             source="danbooru" if source == "auto" else source,

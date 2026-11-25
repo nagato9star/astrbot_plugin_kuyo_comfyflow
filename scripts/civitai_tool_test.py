@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+import httpx
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import smoke_test  # noqa: F401 - install AstrBot stubs for fast offline test
 from comfyflow.clients.comfyui import ComfyUIClient
 from comfyflow.clients.external import CivitaiClient
 from comfyflow.tools.jobs import ComfyuiJobTool
-from comfyflow.tools.reference import ComfyuiCivitaiSearchTool, ComfyuiLookupTool
+from comfyflow.tools.reference import (
+    ComfyuiCivitaiSearchTool,
+    ComfyuiLookupTool,
+    _civitai_image_recipe_lines,
+)
 
 PASS, FAIL = 0, 0
 
@@ -130,6 +139,48 @@ async def main() -> None:
     check("缺 query 报错", "不能为空" in await tool.call(None, mode="images", query=""))
     check("version 缺 id 报错", "model_version_id" in await tool.call(None, mode="version"))
     check("坏 mode 报错", "仅支持" in await tool.call(None, mode="bogus", query="x"))
+
+    # 回归：CivitaiClient.search_images 必须带 withMeta=true
+    seen_params = []
+    def mock_civitai(request):
+        seen_params.append(dict(request.url.params))
+        return httpx.Response(200, json={"items": []})
+    real_civ = CivitaiClient()
+    real_civ._client = httpx.AsyncClient(base_url="https://civitai.red", transport=httpx.MockTransport(mock_civitai))
+    await real_civ.search_images(model_version_id=14479)
+    await real_civ.close()
+    check("search_images 发送 withMeta=true", seen_params and seen_params[0].get("withMeta") == "true")
+
+    # 回归：无 model_version_id 的关键词 images 搜索先匹配模型再拉配方图，并优先保留有 meta 的图
+    class KeywordCivitai(CivitaiClient):
+        async def search_models(self, query="", types="", limit=5, sort="Highest Rated",
+                                period="AllTime", base_models=None, nsfw=None):
+            return [{"id": 7505, "name": "Hu Tao | Genshin Impact",
+                     "modelVersions": [{"id": 14479, "baseModel": "SD 1.5"}]}]
+
+        async def search_images(self, query="", limit=5, nsfw=False, sort="Most Reactions",
+                                period="AllTime", model_id=None, model_version_id=None):
+            if model_version_id == 14479:
+                return [
+                    {"id": 1, "meta": None, "baseModel": "SD 1.5", "modelVersionIds": [14479], "url": "https://img/no-meta.png"},
+                    {"id": 2, "meta": {"prompt": "1girl, hu tao", "sampler": "DPM++ SDE", "steps": 30, "cfgScale": 7, "seed": 0,
+                                        "Model": "urn:air:sd15:checkpoint:civitai:1@2",
+                                        "civitaiResources": [{"type": "checkpoint", "modelName": "AbyssOrangeMix2"},
+                                                             {"type": "lora", "modelName": "HuTaoLoRA", "weight": 0.8}]},
+                     "baseModel": "SD 1.5", "modelVersionIds": [14479], "url": "https://img/with-meta.png"},
+                ]
+            return []
+
+    kw_tool = ComfyuiCivitaiSearchTool(client=KeywordCivitai())
+    kw_out = await kw_tool.call(None, mode="images", query="hu tao", limit=1)
+    check("关键词 images 优先选带配方图", "1girl, hu tao" in kw_out and "no-meta.png" not in kw_out)
+    check("模型名解析 civitaiResources 与 baseModel", "AbyssOrangeMix2（SD 1.5）" in kw_out)
+    check("LoRA 资源摘要", "HuTaoLoRA(0.8)" in kw_out)
+    check("seed=0 不被当成问号", "DPM++ SDE / 30 / 7 / 0" in kw_out)
+    check("modelVersionIds 列表提取", "model_version_id=14479" in kw_out)
+
+    empty_meta_lines = "\n".join(_civitai_image_recipe_lines({"baseModel": "Flux.1 D", "modelVersionIds": [99, 100]}, 1))
+    check("无 meta 图不输出全问号", "原图未附带生成参数" in empty_meta_lines and "Flux.1 D" in empty_meta_lines)
 
     # lookup(model_info)：唯一匹配 → 家族 + 本地元数据
     client = StubClient()

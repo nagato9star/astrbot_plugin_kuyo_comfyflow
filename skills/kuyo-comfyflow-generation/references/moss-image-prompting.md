@@ -1,76 +1,42 @@
-# MOSS-Image 提示词写法
+# MOSS-Image 速查与补充参考
 
-适用：生图家族 `moss`（MOSS-Image-Base / SFT 权重，含 int8 量化工作流）。家族配置和具体工作流字段优先。
+适用：生图家族 `moss`（MOSS-Image-Base / SFT 及其量化、LoRA 工作流）。
 
-先按 [工作流使用入口](moss/index.md) 使用工具和组织提示词。原生文字与 Layout 按需求使用。
+> **首选实战入口**：日常组织提示词、工具槽位分工、`<|...|>` 分块模板及成年向/NSFW 写法，请先完整阅读 [MOSS 工作流与提示词组装指南](moss/scenario/current-workflow.md)。本页仅作表达方式、原生 Layout 换算与官方参考的精简速查。
 
-## 选择表达方式
+## 三种输入形式
 
-MOSS-Image 同时支持三种输入：自然语言、Danbooru 风格 tag 串、JSON Layout。默认用自然语言写整句画面描述；用户点名要 tag 式提示词、或已给出 tag 串时，按 tag 顺序写。Layout 只在用户明确需要精确文字排版、海报、多面板、受控物体关系时使用。
-
-- 语言：英文训练量最大，效果最稳；中文同样可用。用户用中文描述画面、且要渲染中文字时，直接用中文写提示词，画面文字原样保留中文。
-- 长度：模型能吃长提示词（文本编码上限 4096 token），但长不等于好。按画面需要补足，不堆同义形容词和质量词。
-
-## 自然语言写法
-
-按“看得见的东西”组织，可参考顺序：主体与动作 → 外观细节 → 场景与环境 → 物体之间的空间关系 → 构图与镜头 → 光线与材质 → 风格与媒介 → 需要呈现的文字。
-
-- 保留用户给出的数量、颜色、位置、材质、媒介和排除项。已经具体的请求只做轻度整理；用户没提的背景事件、招牌标语、水印不要自行补上。
-- **避免过度堆砌器官细节**：MOSS等大模型注意力极度集中，如果连续强调`tongue`、`licking`、`deep throat`这类局部细节词，会导致局部器官畸形膨胀或多长异形（如怪异大舌头）。动作与生理结构克制写，用常规的人体结构与动作词描述。
-- **动漫脸与写实感控制**：MOSS在处理二次元插画时容易出现油腻的半写实/3D渲染感。如果需要纯正动漫二次元画风，明确指定`2D anime cel-shaded style, flat color, clean lineart`，并在负向提示词中加入`3d, render, cgi, realistic, semi-realistic, photorealistic`；只改开头一个画风词、正文仍留着毛孔与硬直闪这类写实细节，压不住画风（见分章 §3 的成套替换）。
-- 空间关系用明确方位词写：“冰箱在料理台左侧，台面上有一个水果盘”。模型对文字化的空间关系响应良好，这是它的强项之一。
-- 光线写到来源、方向、软硬；材质写到反光质感，避免只写“电影感”“高级感”这类空词。
-
-## tag 串写法
-
-推荐顺序：Quality → Score → Meta → Year → Character → Series → Artist → General。
-
-`best quality, highres, hatsune miku, vocaloid, @foo bar, 1girl, blue hair`
-
-- 画师标签以 `@` 开头，与 Anima 习惯一致；用户点名画师时先用 `comfyui_lookup(type="artist")` 查规范名，查不到就写可观察的画面风格，不要编 tag。
-- 质量词和分数词可以只用一两个，不必整串堆。
+MOSS-Image 同时支持 **自然语言**、**Danbooru 风格 tag 串**、**原生 Layout JSON**：
+- 默认优先用**自然语言**（或 `<|...|>` 分块自然语言）；仅在用户明确要求 tag 式提示词或已给出 tag 串时，按 tag 顺序组织。
+- **不要往正文塞个人 `@画师名`**：MOSS 经 Gemma 4 重打标，原生不识别绝大多数个人 Danbooru 画师名（仅 `Studio Ghibli / Hayao Miyazaki`、`JoJo / Hirohiko Araki`、`Akira Toriyama`、`Ilya Kuvshinov`、`WLOP` 等少数大牌原生有效）。需要个人画师风时，必须实际挂载兼容的画师 LoRA 并使用其真实触发词。
+- tag 串常用顺序：`Quality/Style → Meta → Character → (Series, 按写实/二次元取舍) → General`。质量词点到为止（如 1–2 个），不要整串堆砌；文本编码上限 4096 token，长而不精反而稀释注意力。
 
 ## 图中文字
 
-这是模型的主要卖点，值得认真写。
+- 画面内要显示的文案用英文双引号原样括起（如 `"EXPLORE"`、`"老街早餐"`），保留原文语言、标点、大小写与数字。
+- 精确换行直接写进提示词（真实换行或 `\n`）；只有一句文字或简单对话框时直接用自然语言即可，不必上 Layout JSON。
 
-- 需要出现的文案用英文双引号原样括起（如 `"EXPLORE"`、`"老街早餐"`），保留原文语言、标点、大小写和数字。不要改写、翻译或“顺便润色”。
-- 精确换行直接写进提示词：要么真实换行，要么写 `\n`。不写换行时模型会自己排版，结果不一定符合预期。
-- 需要多块文字各自定位时，才考虑 Layout；只是“画面上有一句话”用普通自然语言就够。
-- 用户没要求文字时，不要自行加招牌、水印、标语。
+## 原生 Layout JSON（精确排版 / 多区块控位）
 
-## 负面提示词
-
-通过 `negative` 填写本次确需新增的排除项。先沿用当前工作流或配方的负向设置，合并方式以实际槽位的 append/replace 为准；不假定每套工作流都预置同一串词。原教程的整套写实负向词不能直接覆盖插画需求，也不要通过传空来假定撤销了追加模式的既有词。
-
-## Layout JSON（实验性）
-
-只有要做精确排版时用。插件直接把 `prompt` 字符串送进工作流，所以 Layout 就是一行 JSON：
+插件直接把 `prompt` 字符串送进工作流，传一行合规 JSON 即可（不要外包 `{"caption":...}`）：
 
 ```json
 {"summary":{"meta":["poster"],"canvas":"single","caption":"整体画面与风格描述"},"items":[{"label":"text","caption":"顶部居中的深蓝大写标题","text":"EXPLORE","bbox":[-416,-384,-288,384]},{"label":"object","caption":"下方居中的扁平蓝色山峦插画","bbox":[-192,-288,384,288]}],"bbox_coord_space":"abs_centralized","bbox_format":"yxyx"}
 ```
 
-- `summary.caption` 写整体场景和风格；`items` 逐条写元素类别（`label`）、描述（`caption`）、文字内容（`text`）和包围盒（`bbox`）。
-- `bbox` 是 `[y_min, x_min, y_max, x_max]`，坐标系为画布中心原点、绝对像素、x 向右 y 向下。1024×1024 画布的两轴范围是 −512 到 +512。把常规左上原点坐标减去 W/2、H/2 即得。
-- 尺寸必须和生图参数一致：Layout 里的坐标按你实际用的宽高算，`prompt` 本身不携带尺寸，画幅用 `width` / `height` 或 `size` 传。
-- 包围盒是摆放标注，不是“画个边框”的指令；元素外观写在 caption 里。
+- `summary.canvas` 取值：`single` / `multi_panel` / `collage`；`items[].label` 取值：`object` / `character` / `text`；可选 `summary.palette` / `items[].palette`（HEX 数组，配合删掉正文自然语言颜色词）。
+- `bbox` 为 `[y_min, x_min, y_max, x_max]`，以**画布中心为原点**、绝对像素、x 向右 y 向下；常规左上原点坐标减去 `W/2`、`H/2` 即得（左上 `floor`、右下 `ceil`）。
+- **尺寸对齐**：常规生图可直接用 `aspect_ratio` / `megapixels` / `size`（插件会自动换算并对齐 16 的倍数）；但**使用 Layout JSON 时请同时在 `comfyui_draw` 中显式传入 16 倍数的 `width` 与 `height`**，确保画布宽高与 `bbox` 中心坐标严格一致。
 
-## 采样与尺寸（官方 Base 参考）
+## 官方参数参考（不覆盖当前工作流默认配置）
 
-本节说明官方 Base 示例，不代表当前 SFT、量化或其他工作流的实际值。当前任务默认沿用已配置参数；原教程的快采样参数也不自动替换这些设置。
+- **分辨率**：官方建议总像素 1M–2M（可外推 0.25M–4M），宽高必须是 **16 的正整数倍**；部分快速方案用 0.6MP / 16 步 / CFG 3.0 / 关闭 SLG。
+- **采样**：官方 Base/SFT 高清推荐 Steps ≥ 50、CFG 3.0（3.0–6.0，长提示词用 3.0 即可）、Shift 5.0、采样器 Euler；SLG（`single_layers` 22/24/26）用于收敛高频几何与密集小字。
+- **工具限制**：当前插件未公开 Shift / SLG 参数，由工作流本身决定，勿在工具调用或正文里自行编造。
 
-- 总像素推荐 1M、1.5M、2M；可外推 0.25M（512×512）到 4M。宽高必须是 16 的正整数倍，否则报错。
-- 步数 ≥ 50 效果最佳，CFG 默认 3.0（3.0–6.0；长提示词 3.0 就够，短提示词可适当调高），Shift 5.0，采样器 Euler。
-- SLG 是否启用、采用哪种方式及层号，以实际工作流为准。当前生图工具没有直接公开 Shift 或 SLG 参数，不能在工具调用里自行添加这些字段，也不把它们写进画面正文。
+## 上游参考来源
 
-## 这个插件里的限制
-
-- 图中文字的长提示词会占用文本编码预算（4096 token）；中英混排的大段文案要精简到真正需要渲染的部分。
-
-## 来源与适用范围
-
-- 官方 [USERGUIDE](https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE.md)（[中文版](https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE_ZH.md)）：推理参数、Prompt 规范、tag 顺序、文字换行、Layout JSON 字段与负向标签。
-- [MOSS-Image-SFT 模型卡](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT)：Base/SFT 差异、默认采样设置、文本编码上限 4096 token。
-- [ComfyUI 说明](https://github.com/OpenMOSS/MOSS-Image/blob/main/comfyui/README.md)：节点、SLG 配置、ModelSamplingSD3 与 shift 的关系。
-- 官方 [Prompt Enhancer skill](https://github.com/OpenMOSS/MOSS-Image/blob/main/skills/moss-image-prompt-enhancer/SKILL.md)：caption / Layout 的取舍、文字原文保留、Layout 草稿坐标转换。该 skill 面向文件系统和脚本工具，输出 `{"caption":"..."}` 之类的包装；本插件只接收提示词字符串，因此只采用其中关于描述取舍和坐标的写法，不照搬其文件与 JSON 包装流程。原先单独维护的 `moss-image-prompter` skill 已并入本文件，内容重复的部分不再另立文档。
+- [资料索引（按章节号查找细节）](moss/index.md)
+- 官方 [USERGUIDE](https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE.md)（[中文版](https://github.com/OpenMOSS/MOSS-Image/blob/main/USERGUIDE_ZH.md)）
+- [MOSS-Image-SFT 模型卡](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT) · [ComfyUI 说明](https://github.com/OpenMOSS/MOSS-Image/blob/main/comfyui/README.md)
+- 官方 [Prompt Enhancer skill](https://github.com/OpenMOSS/MOSS-Image/blob/main/skills/moss-image-prompt-enhancer/SKILL.md)（本插件直接接收 `prompt` 字符串，不采用其本地脚本与外层 JSON 包装）

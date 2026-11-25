@@ -330,8 +330,9 @@ class CharacterTagLookup:
             await self._load_names(allow_download=False)
         matches = self.overrides.get(key) or self.exact.get(key, [])
         exact = bool(matches)
-        if not matches:
-            matches = [
+        local_partial: list[dict] = []
+        if not exact:
+            local_partial = [
                 entry
                 for entry in self.entries
                 if any(
@@ -339,25 +340,25 @@ class CharacterTagLookup:
                     for name in [entry["tag"], *entry.get("names", [])]
                 )
             ]
-        if not matches and self.danbooru is not None:
+        if not exact and self.danbooru is not None:
             cached = self._remote_names.get(key)
             if cached and time.monotonic() - cached[0] < 60:
-                matches = copy.deepcopy(cached[1])
+                remote_matches = copy.deepcopy(cached[1])
             else:
                 try:
                     async with asyncio.timeout(self.timeout):
                         # Keep enough candidates to detect ambiguity even with limit=1.
-                        matches = await self.danbooru.character_candidates(query, 8)
+                        remote_matches = await self.danbooru.character_candidates(query, 8)
                 except (httpx.HTTPError, ValueError, TimeoutError):
-                    matches = []
-                self._remote_names[key] = (time.monotonic(), copy.deepcopy(matches))
+                    remote_matches = []
+                self._remote_names[key] = (time.monotonic(), copy.deepcopy(remote_matches))
                 if len(self._remote_names) > 512:
                     self._remote_names.pop(next(iter(self._remote_names)))
-            if matches:
+            if remote_matches:
                 # Only exact aliases are learned; partial searches stay candidates.
                 exact_matches = [
                     entry
-                    for entry in matches
+                    for entry in remote_matches
                     if any(
                         key == normalize_name(name)
                         for name in [entry["tag"], *entry.get("names", [])]
@@ -384,6 +385,13 @@ class CharacterTagLookup:
                         }
                     self._index(list(merged.values()))
                     await self._persist()
+                else:
+                    seen_tags = {entry["tag"] for entry in remote_matches}
+                    matches = [*remote_matches, *(e for e in local_partial if e["tag"] not in seen_tags)]
+            else:
+                matches = local_partial
+        elif not exact:
+            matches = local_partial
         matches = sorted(matches, key=lambda entry: (len(entry["tag"]), entry["tag"]))
         total = len(matches)
         selected = copy.deepcopy(matches[:limit])
