@@ -296,6 +296,49 @@ async def check_learned_names_and_colors():
     assert "眼色候选" not in mixed and "发色候选" not in mixed
     assert "blue eyes, red eyes, heterochromia" in mixed
 
+    # Substring matches like 七濑胡桃 must not block Danbooru Wiki lookup for exact 胡桃 (hu_tao).
+    with tempfile.TemporaryDirectory() as temporary:
+        class HuTaoDanbooru:
+            calls = 0
+
+            async def character_candidates(self, query, limit):
+                self.calls += 1
+                if query == "胡桃":
+                    return [
+                        {"tag": "hu_tao_(genshin_impact)", "names": ["胡桃", "フータオ"], "source": "Danbooru Wiki 别名"},
+                    ]
+                return []
+
+        hutao_file = Path(temporary) / "names.json"
+        hutao_file.write_text(json.dumps({
+            "nanase_kurumi_(menhera-chan)": {"zh_hans": "七濑胡桃", "ja": "七瀬くるみ"},
+            "kurumi_(blue_archive)": {"zh_hans": "高仓胡桃", "ja": "高倉クルミ"},
+        }), encoding="utf-8")
+        db = HuTaoDanbooru()
+        hutao_service = CharacterTagLookup(Path(temporary), enabled=False, names_file=str(hutao_file), danbooru=db, reference_url="")
+        res = await hutao_service.lookup("胡桃")
+        assert db.calls == 1
+        assert res["exact"] is True and res["total"] == 1
+        assert res["matches"][0]["tag"] == "hu_tao_(genshin_impact)"
+        await hutao_service.close()
+
+    # detail=True with a Chinese query resolves canonical tag before Danbooru post sampling.
+    with tempfile.TemporaryDirectory() as temporary:
+        seen_booru = []
+        class StubBooru(DanbooruClient):
+            async def search_character(self, query, limit):
+                seen_booru.append(query)
+                return {"character": query, "aliases": [], "posts": [{"tag_string": "twintails aqua_hair"}], "url": ""}
+
+        miku_file = Path(temporary) / "miku.json"
+        miku_file.write_text(json.dumps({"hatsune_miku": {"zh_hans": "初音未来"}}), encoding="utf-8")
+        miku_service = CharacterTagLookup(Path(temporary), enabled=False, names_file=str(miku_file), reference_url="")
+        tool = ComfyuiLookupTool(character_lookup=miku_service, danbooru=StubBooru())
+        detail_out = await tool.call(None, type="character", query="初音未来", detail=True)
+        assert seen_booru == ["hatsune_miku"]
+        assert "twintails" in detail_out
+        await miku_service.close()
+
 
 async def main():
     with tempfile.TemporaryDirectory() as temporary:

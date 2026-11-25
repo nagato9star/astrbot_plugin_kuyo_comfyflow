@@ -101,16 +101,18 @@ class DanbooruClient:
         return artists[0]
 
     async def _find_character(self, query: str) -> dict | None:
+        q_tag = "_".join(query.strip().split()).replace("*", "")
         tags = await self._get(
             "/tags.json",
-            {"search[name_matches]": f"*{query}*", "search[category]": 4, "limit": 5},
+            {"search[name_matches]": f"*{q_tag}*", "search[category]": 4, "limit": 5},
         )
         if not tags:
             return None
         q = query.lower()
+        q_norm = q_tag.lower()
         for t in tags:
             names = [str(t.get("name", ""))] + [str(a) for a in (t.get("aliases") or [])]
-            if any(q in n.lower() for n in names):
+            if any(q in n.lower() or q_norm in n.lower() for n in names):
                 return t
         return tags[0]
 
@@ -159,7 +161,7 @@ class DanbooruClient:
         # Danbooru puts Japanese/Chinese names on wiki pages, not on Tag.aliases.
         data = await self._get("/wiki_pages.json", {
             "search[other_names_match]": q, "search[tag][category]": 4,
-            "limit": limit, "only": "title,other_names",
+            "limit": max(int(limit or 5), 20), "only": "title,other_names",
         })
         if not isinstance(data, list):
             return []
@@ -381,7 +383,7 @@ class CivitaiClient:
         model_id: int | None = None,
         model_version_id: int | None = None,
     ) -> list[dict]:
-        """搜索图片，返回含 meta（生成配方）与 modelId/modelVersionId 的条目列表。"""
+        """搜索图片，返回含 meta（生成配方）与 modelVersionIds 的条目列表。"""
         params = {
             "search": query,
             "limit": limit,
@@ -390,6 +392,7 @@ class CivitaiClient:
             "nsfw": "true" if nsfw else "false",
             "modelId": model_id,
             "modelVersionId": model_version_id,
+            "withMeta": "true",
         }
         return await self._get_items("/api/v1/images", params)
 
