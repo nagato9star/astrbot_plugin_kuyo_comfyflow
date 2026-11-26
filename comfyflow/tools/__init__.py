@@ -6,10 +6,12 @@ from .diagnostics import ComfyuiSystemStatsTool, ComfyuiFreeMemoryTool, ComfyuiV
 from .recipes import ComfyuiRecipeTool, ComfyuiRecipeDrawTool
 from .draw import ComfyuiDrawTool
 from .edit import ComfyuiEditTool
+from .interrogate import ComfyuiReversePromptTool
 
 __all__ = [
     'ComfyuiDrawTool',
     'ComfyuiEditTool',
+    'ComfyuiReversePromptTool',
     'ComfyuiRecipeDrawTool',
     'ComfyuiLookupTool',
     'ComfyuiJobTool',

@@ -577,6 +577,97 @@
     "hint": "旧版兼容项；model_families 为空时作为兜底工作流",
     "invisible": true
   },
+  "_interrogate_section": {
+    "description": "=== 提示词反推 (VLM) ===",
+    "type": "text",
+    "invisible": true
+  },
+  "interrogate_provider_id": {
+    "description": "反推视觉模型",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider",
+    "hint": "用于 comfyui_reverse_prompt 视觉反推。留空则自动回退 AstrBot 全局图片描述模型（default_image_caption_provider_id）。"
+  },
+  "interrogate_fallback_provider_ids": {
+    "description": "反推视觉模型回落",
+    "type": "list",
+    "items": {
+      "type": "string"
+    },
+    "default": [],
+    "_special": "select_providers",
+    "hint": "主反推视觉模型失败或限流时按顺序切换这些提供商。"
+  },
+  "interrogate_thinking_effort": {
+    "description": "反推思考强度",
+    "type": "string",
+    "options": [
+      "",
+      "low",
+      "medium",
+      "high"
+    ],
+    "labels": [
+      "跟随提供商",
+      "低（推荐，更快）",
+      "中",
+      "高"
+    ],
+    "default": "low",
+    "hint": "透传 reasoning_effort 给 OpenAI/DeepSeek 兼容视觉模型；反推建议设为低，减少等待耗时。"
+  },
+  "interrogate_system_prompt": {
+    "description": "自定义反推系统提示词（可选）",
+    "type": "text",
+    "default": "",
+    "hint": "留空使用内置客观视觉索引模板（按 style 自动切换）；非空时覆盖内置系统提示词，便于针对特定模型微调语气与输出约束。"
+  },
+  "interrogate_api_base": {
+    "description": "直连 Vision API 地址（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "不想依赖 AstrBot Provider 时可直接填 OpenAI/DeepSeek 兼容基地址，例如 https://api.deepseek.com/v1。需同时填写 api_key 与 model。"
+  },
+  "interrogate_api_key": {
+    "description": "直连 Vision API Key（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "直连 Vision API 使用的 Bearer Key；留空则只走上方 AstrBot 视觉模型。"
+  },
+  "interrogate_api_model": {
+    "description": "直连 Vision 模型名（可选）",
+    "type": "string",
+    "default": "",
+    "hint": "直连 Vision API 的模型名，例如 deepseek-flash、gpt-4o-mini。"
+  },
+  "interrogate_image_detail": {
+    "description": "直连 Vision 图片精度",
+    "type": "string",
+    "options": [
+      "high",
+      "low",
+      "auto"
+    ],
+    "labels": [
+      "高细节 (high)",
+      "低细节省流 (low)",
+      "自动 (auto)"
+    ],
+    "default": "high",
+    "hint": "传给 OpenAI/DeepSeek image_url.detail 的精度，反推细节提示词推荐 high。"
+  },
+  "interrogate_timeout": {
+    "description": "反推请求超时（秒）",
+    "type": "float",
+    "default": 45.0,
+    "slider": {
+      "min": 10,
+      "max": 180,
+      "step": 5
+    },
+    "hint": "单次直连视觉反推的 HTTP 超时上限。"
+  },
   "_animadex_section": {
     "description": "=== AnimaDex 角色库 ===",
     "type": "text",

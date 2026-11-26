@@ -28,7 +28,7 @@ from ..workflows.slots import apply_slots
 from ..workflows.slots import detect_slots
 from ..workflows.slots import source_image_slots
 from ..workflows.builder import WorkflowBuilder
-from .common import _ASYNC_GENERATION_HINT, _custom_edit_canvas_dimensions, _edit_canvas_dimensions, _enqueue_generation, _event_scope, _message_images, _number, _remember_image_path, _remember_prompt_id, _wait_outputs
+from .common import _ASYNC_GENERATION_HINT, _custom_edit_canvas_dimensions, _edit_canvas_dimensions, _enqueue_generation, _number, _remember_image_path, _remember_prompt_id, _resolve_source_images, _wait_outputs
 
 
 _EDIT_DESC = (
@@ -145,107 +145,13 @@ class ComfyuiEditTool(FunctionTool[AstrAgentContext]):
         max_inputs: int,
     ) -> tuple[list[Path] | None, str | None]:
         """Resolve one or more attached images in workflow input order."""
-        requested_many = kwargs.get("image_paths")
-        requested_single = str(kwargs.get("image_path") or "").strip()
-        if requested_many not in (None, "") and requested_single:
-            return None, "image_path 与 image_paths 只能选一个。"
-        if (requested_many not in (None, "") or requested_single) and (
-            kwargs.get("image_indices") not in (None, "")
-            or kwargs.get("image_index") not in (None, "")
-        ):
-            return None, "image_path/image_paths 与 image_index/image_indices 只能选一类输入。"
-
-        raw_paths: list[str] = []
-        if requested_many not in (None, ""):
-            if not isinstance(requested_many, list) or not all(isinstance(x, str) for x in requested_many):
-                return None, "image_paths 必须是本插件此前回执的本地路径数组。"
-            raw_paths = [path.strip() for path in requested_many if path.strip()]
-        elif requested_single:
-            raw_paths = [requested_single]
-        if requested_many is not None and not raw_paths:
-            return None, "image_paths 不能为空，请提供明确图片路径。"
-
-        def resolve_allowed_paths(values: list[str]) -> tuple[list[Path] | None, str | None]:
-            resolved: list[Path] = []
-            roots = [self.output_dir.resolve()]
-            try:
-                from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
-
-                roots.append(Path(get_astrbot_temp_path()).resolve())
-            except (ImportError, OSError, RuntimeError):
-                pass
-            for value in values:
-                try:
-                    path = Path(value).expanduser().resolve(strict=True)
-                except (OSError, ValueError):
-                    return None, "image_path/image_paths 无法读取；请确认路径有效。"
-                allowed = False
-                for root in roots:
-                    try:
-                        path.relative_to(root)
-                        allowed = True
-                        break
-                    except ValueError:
-                        continue
-                if not allowed:
-                    return None, "image_path/image_paths 仅支持本插件输出目录或 AstrBot data/temp 中的文件。"
-                if not path.is_file():
-                    return None, "来源图片文件不存在。"
-                resolved.append(path)
-            if len(resolved) > max_inputs:
-                return None, f"工作流有 {max_inputs} 个参考图输入，image_paths 不能超过该数量。"
-            return (resolved or None), (None if resolved else "没有提供有效的来源图片路径。")
-
-        if raw_paths:
-            return resolve_allowed_paths(raw_paths)
-
-        images = _message_images(context)
-        if images:
-            raw_indices = kwargs.get("image_indices")
-            raw_index = kwargs.get("image_index")
-            if raw_indices not in (None, "") and raw_index not in (None, ""):
-                return None, "image_index 与 image_indices 只能选一个。"
-            indices: list[int]
-            if raw_indices not in (None, ""):
-                if not isinstance(raw_indices, list) or not raw_indices:
-                    return None, "image_indices 必须是非空的 1-based 图片序号数组。"
-                try:
-                    if any(isinstance(index, bool) for index in raw_indices):
-                        raise ValueError("boolean index")
-                    indices = [int(_number(index, "image_indices", integer=True, minimum=1)) for index in raw_indices]
-                except (TypeError, ValueError):
-                    return None, "image_indices 必须只包含整数。"
-            elif raw_index not in (None, ""):
-                try:
-                    if isinstance(raw_index, bool):
-                        raise ValueError("boolean index")
-                    indices = [int(_number(raw_index, "image_index", integer=True, minimum=1))]
-                except (TypeError, ValueError):
-                    return None, "image_index 必须是从 1 开始的整数。"
-            else:
-                if len(images) > max_inputs:
-                    return None, f"当前消息有 {len(images)} 张图片，但工作流只有 {max_inputs} 个参考图输入；请用 image_index 或 image_indices 选择。"
-                indices = list(range(1, len(images) + 1))
-
-            if len(indices) > max_inputs:
-                return None, f"image_indices 不能超过工作流的 {max_inputs} 个参考图输入。"
-            if any(index < 1 or index > len(images) for index in indices):
-                return None, f"image_indices 超出范围；当前消息有 {len(images)} 张图片。"
-
-            paths: list[Path] = []
-            for index in indices:
-                try:
-                    paths.append(Path(await images[index - 1].convert_to_file_path()).resolve(strict=True))
-                except Exception as e:  # noqa: BLE001 - media resolver may raise adapter errors
-                    return None, f"无法读取第 {index} 张消息图片（{e}）。"
-            return paths, None
-
-        if kwargs.get("image_index") is not None or kwargs.get("image_indices") is not None:
-            return None, "当前消息及引用消息没有可读取图片，image_index/image_indices 无法选择；请使用 image_path/image_paths。"
-        last = str((self.shared.get("last_image_paths") or {}).get(_event_scope(context)) or "")
-        if last and Path(last).is_file():
-            return [Path(last)], None
-        return None, "当前消息没有图片，且本会话没有可用的上次生成图片；请附图后重试。"
+        return await _resolve_source_images(
+            context,
+            kwargs,
+            output_dir=self.output_dir,
+            shared=self.shared,
+            max_inputs=max_inputs,
+        )
 
     async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
         prompt = str(kwargs.get("prompt") or "").strip()
