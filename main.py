@@ -33,6 +33,7 @@ for _name in tuple(sys.modules):
 from .comfyflow.resources.characters import CharacterTagLookup  # noqa: E402
 from .comfyflow.clients.animadex import AnimaDexClient  # noqa: E402
 from .comfyflow.clients.comfyui import ComfyUIClient  # noqa: E402
+from .comfyflow.clients.vision import VisionInterrogateClient  # noqa: E402
 from .comfyflow.studio.config import refresh_config_options  # noqa: E402
 from .comfyflow.generation.queue import GenerationQueue  # noqa: E402
 from .comfyflow.generation.receipts import clean_task_result  # noqa: E402
@@ -43,6 +44,7 @@ from .comfyflow.tools import (  # noqa: E402
     ComfyuiJobTool,
     ComfyuiRecipeTool,
     ComfyuiRecipeDrawTool,
+    ComfyuiReversePromptTool,
     ComfyuiSystemStatsTool,
     ComfyuiUploadFileTool,
     ComfyuiValidateWorkflowTool,
@@ -65,7 +67,14 @@ DEFAULT_TIMEOUT = 300
 DEFAULT_CACHE_TTL = 600
 DEFAULT_WORKFLOW = "anima-v3"
 
-BASIC_LLM_TOOLS = {"comfyui_draw", "comfyui_edit", "comfyui_recipe_draw", "comfyui_lookup", "comfyui_job"}
+BASIC_LLM_TOOLS = {
+    "comfyui_draw",
+    "comfyui_edit",
+    "comfyui_reverse_prompt",
+    "comfyui_recipe_draw",
+    "comfyui_lookup",
+    "comfyui_job",
+}
 # 这些工具会读取本地图片、卸载模型或清理执行缓存，
 # 默认不交给模型；需要时由管理员显式打开配置。
 LLM_UNSAFE_TOOLS = {
@@ -213,6 +222,18 @@ class ComfyUIDirectPlugin(Star):
         self._civitai = CivitaiClient(api_key=civitai_key)
         # 注入 civitai 客户端到 ComfyUIClient，用于本地无触发词时在线回退
         self._client.civitai_client = self._civitai
+        self._vision = VisionInterrogateClient(
+            self.context,
+            provider_id=str(cfg.get("interrogate_provider_id") or "").strip(),
+            fallback_provider_ids=cfg.get("interrogate_fallback_provider_ids") or [],
+            thinking_effort=str(cfg.get("interrogate_thinking_effort") or "low").strip(),
+            system_prompt_override=str(cfg.get("interrogate_system_prompt") or "").strip(),
+            api_base=str(cfg.get("interrogate_api_base") or "").strip(),
+            api_key=str(cfg.get("interrogate_api_key") or "").strip(),
+            api_model=str(cfg.get("interrogate_api_model") or "").strip(),
+            image_detail=str(cfg.get("interrogate_image_detail") or "high").strip(),
+            timeout=float(cfg.get("interrogate_timeout") or 45.0),
+        )
         self._builder = WorkflowBuilder(
             plugin_dir=Path(__file__).resolve().parent,
             default_workflow=self._families.first().workflow,
@@ -285,6 +306,13 @@ class ComfyUIDirectPlugin(Star):
             families=self._families,
         )
         self._recipe_draw_tool.refresh_schema()
+        self._reverse_prompt_tool = ComfyuiReversePromptTool(
+            vision=self._vision,
+            output_dir=self._output_dir,
+            shared=shared,
+            families=self._families,
+        )
+        self._reverse_prompt_tool.refresh_schema()
         self._draw_tool.on_schema_change = self._recipe_draw_tool.refresh_schema
         self._generation_queue.on_schema_change = self._recipe_draw_tool.refresh_schema
         self._lookup_tool = ComfyuiLookupTool(
@@ -308,6 +336,7 @@ class ComfyUIDirectPlugin(Star):
         tools = [
             self._draw_tool,
             self._edit_tool,
+            self._reverse_prompt_tool,
             self._recipe_draw_tool,
             self._lookup_tool,
             ComfyuiCivitaiSearchTool(client=self._civitai),
@@ -346,6 +375,7 @@ class ComfyUIDirectPlugin(Star):
                 plugin_config=config,
                 auto_trigger_words=bool(cfg.get("auto_lora_trigger_words", False)),
                 edit_workflows=self._edit_workflows,
+                vision_client=self._vision,
             )
         except Exception as e:
             logger.error(f"[ComfyUIDirect] WebUI 接口注册失败: {e}")
@@ -532,4 +562,5 @@ class ComfyUIDirectPlugin(Star):
         await self._gelbooru.close()
         await self._civitai.close()
         await self._animadex.close()
+        await self._vision.close()
         logger.info("[ComfyUIDirect] 已卸载，连接已关闭")

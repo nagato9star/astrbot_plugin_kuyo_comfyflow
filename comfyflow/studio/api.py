@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import copy
 import json
 import random
@@ -17,7 +18,10 @@ from ..clients.comfyui import (
     execution_error_message,
     image_media_type,
 )
+from ..clients.vision import VisionInterrogateClient
+from ..resources.interrogate import reverse_prompt
 from ..storage.images import save_image
+from ..tools.common import _as_bool, _resolve_allowed_image_paths
 from ..resources.catalog import selection_error
 from ..workflows.registry import EditWorkflowRegistry, ModelFamilyRegistry, WorkflowProfileStore
 from .config import refresh_config_options
@@ -123,6 +127,7 @@ class StudioApi:
         plugin_config: Any = None,
         auto_trigger_words: bool = False,
         edit_workflows: EditWorkflowRegistry | None = None,
+        vision_client: VisionInterrogateClient | None = None,
     ) -> None:
         self.client = client
         self.builder = builder
@@ -134,6 +139,7 @@ class StudioApi:
         self.edit_tool = edit_tool
         self.families = families
         self.edit_workflows = edit_workflows
+        self.vision_client = vision_client
         self.profiles = profiles
         self.config_defaults = config_defaults or {}
         self.auto_trigger_words = auto_trigger_words
@@ -911,7 +917,60 @@ class StudioApi:
         return {"ok": True, "done": True, "filename": filename,
                 "data_url": f"data:{image_media_type(content, filename)};base64," + base64.b64encode(content).decode("ascii")}
 
+    async def interrogate(self) -> Any:
+        data = await _body()
+        raw_image = str(data.get("image_data") or "").strip()
+        raw_path = str(data.get("image_path") or "").strip()
+        if not raw_image and not raw_path:
+            return _json({"ok": False, "error": "请提供 image_data 或 image_path"}, 400)
 
+        image_path: Path | str = ""
+        image_bytes: bytes
+        if raw_image:
+            payload = raw_image.split(",", 1)[1] if raw_image.startswith("data:") and "," in raw_image else raw_image
+            try:
+                image_bytes = base64.b64decode(payload, validate=True)
+            except (ValueError, binascii.Error):
+                return _json({"ok": False, "error": "image_data 不是合法的 base64 图片数据"}, 400)
+            if not image_bytes:
+                return _json({"ok": False, "error": "image_data 不能为空"}, 400)
+        else:
+            paths, path_err = _resolve_allowed_image_paths([raw_path], self.output_dir, max_inputs=1)
+            if path_err or not paths:
+                return _json({"ok": False, "error": path_err or "无法读取 image_path"}, 400)
+            image_path = paths[0]
+            try:
+                image_bytes = await asyncio.to_thread(paths[0].read_bytes)
+            except OSError as exc:
+                return _json({"ok": False, "error": f"读取图片失败: {exc}"}, 400)
+
+        if len(image_bytes) > 25 * 1024 * 1024:
+            return _json({"ok": False, "error": "图片不能超过 25 MiB"}, 400)
+
+        style = str(data.get("style") or "auto").strip().lower()
+        if style not in {"auto", "danbooru", "natural"}:
+            return _json({"ok": False, "error": "style 仅支持 auto、danbooru 或 natural"}, 400)
+        model_family = str(data.get("model_family") or "").strip()
+        focus = str(data.get("focus") or "").strip()
+        read_metadata = _as_bool(data.get("read_metadata", True), default=True)
+
+        try:
+            result = await reverse_prompt(
+                image_path=image_path,
+                image_bytes=image_bytes,
+                style=style,
+                model_family=model_family,
+                focus=focus,
+                read_metadata=read_metadata,
+                families=self.families,
+                vision=self.vision_client,
+            )
+            return _json({"ok": True, **result})
+        except ValueError as exc:
+            return _json({"ok": False, "error": str(exc)}, 400)
+        except Exception as exc:
+            logger.error(f"[ComfyUIDirect] Studio 提示词反推失败: {exc}")
+            return _json({"ok": False, "error": str(exc)}, 502)
 
 
 def register_web_apis(
@@ -930,6 +989,7 @@ def register_web_apis(
     plugin_config: Any = None,
     auto_trigger_words: bool = False,
     edit_workflows: EditWorkflowRegistry | None = None,
+    vision_client: VisionInterrogateClient | None = None,
 ) -> None:
     if store is None or output_dir is None:
         logger.error("[ComfyUIDirect] WebUI 缺少 recipe store，跳过注册")
@@ -949,6 +1009,7 @@ def register_web_apis(
         plugin_config=plugin_config,
         auto_trigger_words=auto_trigger_words,
         edit_workflows=edit_workflows,
+        vision_client=vision_client,
     )
     routes = [
         ("/status", api.status, ["GET"], "ComfyUI 状态"),
@@ -973,6 +1034,7 @@ def register_web_apis(
         ("/generate", api.generate, ["POST"], "按配方试跑"),
         ("/generate", api.generate_poll, ["GET"], "轮询试跑结果"),
         ("/generate/interrupt", api.interrupt, ["POST"], "中断试跑"),
+        ("/interrogate", api.interrogate, ["POST"], "反推图片提示词"),
         ("/history", api.list_history, ["GET"], "插件生成历史"),
     ]
     for path, handler, methods, desc in routes:
